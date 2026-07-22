@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>WordWise</title>
+    <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<div id="app">
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <span class="app-logo">📖</span>
+            <h1 class="app-title">WordWise</h1>
+        </div>
+        <div class="header-right">
+            <button id="btn-history" class="icon-btn" title="查询历史">📋</button>
+            <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
+            <button id="btn-minimize" class="icon-btn" title="最小化到托盘">➖</button>
+        </div>
+    </header>
+
+    <!-- Search Bar -->
+    <div class="search-section">
+        <div class="search-bar">
+            <input type="text" id="search-input" placeholder="输入英语单词或短语..." autocomplete="off" spellcheck="false"/>
+            <button id="btn-search" class="search-btn" title="查询">🔍</button>
+            <button id="btn-paste" class="paste-btn" title="粘贴剪贴板">📋</button>
+        </div>
+        <div class="shortcut-hint">全局快捷键: <kbd id="shortcut-display">Ctrl+Alt+Q</kbd> ｜ <kbd>Esc</kbd> 隐藏窗口</div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p>正在查询中...</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error" class="error hidden">
+        <span class="error-icon">⚠️</span>
+        <span id="error-text"></span>
+    </div>
+
+    <!-- Result -->
+    <div id="result" class="result hidden"></div>
+
+    <!-- History Panel -->
+    <div id="history-panel" class="panel hidden">
+        <div class="panel-header">
+            <h2>📋 查询历史</h2>
+            <div class="panel-actions">
+                <button id="btn-clear-history" class="danger-btn">清空全部</button>
+                <button id="btn-close-history" class="icon-btn">✕</button>
+            </div>
+        </div>
+        <div id="history-list" class="history-list"></div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="panel hidden">
+        <div class="panel-header">
+            <h2>⚙️ 设置</h2>
+            <button id="btn-close-settings" class="icon-btn">✕</button>
+        </div>
+        <div class="settings-form">
+            <div class="form-group">
+                <label for="api-key">API Key</label>
+                <div class="input-with-toggle">
+                    <input type="password" id="api-key" placeholder="输入你的 OpenAI API Key"/>
+                    <button id="btn-toggle-key" class="toggle-visibility" type="button" title="显示/隐藏">👁️</button>
+                </div>
+                <small class="form-hint">支持 OpenAI 兼容的 API（如 DeepSeek、通义千问等）</small>
+            </div>
+            <div class="form-group">
+                <label for="api-url">API URL</label>
+                <input type="text" id="api-url" placeholder="https://api.openai.com/v1"/>
+                <small class="form-hint">Base URL，自动拼接 /chat/completions。如: https://maas-coding-api.cn-huabei-1.xf-yun.com/v2</small>
+            </div>
+            <div class="form-group">
+                <label for="model-name">模型名称</label>
+                <input type="text" id="model-name" placeholder="gpt-4o-mini"/>
+                <small class="form-hint">推荐 gpt-4o-mini，性价比高</small>
+            </div>
+            <div class="form-group">
+                <label for="shortcut-key">呼出快捷键</label>
+                <div class="shortcut-input-wrapper">
+                    <input type="text" id="shortcut-key" placeholder="点击此处录制快捷键..." readonly/>
+                    <button id="btn-record-shortcut" class="record-btn" type="button">录制</button>
+                </div>
+                <small class="form-hint">按下组合键自动录入，修改后需保存。默认 Ctrl+Alt+Q</small>
+            </div>
+            <button id="btn-save-config" class="primary-btn">💾 保存设置</button>
+        </div>
+    </div>
+
+    <!-- History Detail Modal -->
+    <div id="history-detail-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">查询详情</h2>
+                <button id="btn-close-modal" class="icon-btn">✕</button>
+            </div>
+            <div id="modal-body" class="modal-body"></div>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
