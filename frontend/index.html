@@ -91,7 +91,48 @@
                 </div>
                 <small class="form-hint">按下组合键自动录入，修改后需保存。默认 Ctrl+Alt+Q</small>
             </div>
+            <div class="form-group ecdict-group">
+                <label>离线词典 (ECDICT)</label>
+                <div class="ecdict-row">
+                    <span id="ecdict-status" class="ecdict-status unavailable">❌ 未导入</span>
+                    <button id="btn-import-ecdict" class="import-btn" type="button">导入 ECDICT 词典</button>
+                </div>
+                <small class="form-hint">导入后查词秒出结果，无需等待LLM。将 ecdict.csv 或 ecdict.csv.gz 放到程序目录的 ECDICT/ 文件夹下</small>
+            </div>
             <button id="btn-save-config" class="primary-btn">💾 保存设置</button>
+
+            <!-- Sync Section -->
+            <div class="settings-divider"></div>
+            <h3 class="settings-section-title">🔄 多设备同步</h3>
+            <div class="form-group">
+                <label for="sync-server-addr">同步服务器地址</label>
+                <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
+                <small class="form-hint">部署在云端的 WordWise 同步服务器地址，本地调试可填 http://127.0.0.1:9274</small>
+            </div>
+            <div class="form-group">
+                <label for="sync-user-token">用户 Token</label>
+                <div class="input-with-toggle">
+                    <input type="password" id="sync-user-token" placeholder="输入你的同步Token"/>
+                    <button id="btn-toggle-sync-token" class="toggle-visibility" type="button" title="显示/隐藏">👁️</button>
+                </div>
+                <small class="form-hint">Token 由服务器分配，相当于你的账号密码，请妥善保管</small>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="sync-auto-sync" checked/>
+                    <span>启用自动同步</span>
+                </label>
+                <small class="form-hint">开启后，每次查词自动推送到服务器；启动时自动拉取最新数据</small>
+            </div>
+            <div class="sync-actions">
+                <button id="btn-sync-test" class="secondary-btn" type="button">🔗 测试连接</button>
+                <button id="btn-sync-create-user" class="secondary-btn" type="button">🆕 获取Token</button>
+            </div>
+            <div class="sync-actions">
+                <button id="btn-sync-push" class="secondary-btn" type="button">⬆️ 推送到服务器</button>
+                <button id="btn-sync-pull" class="secondary-btn" type="button">⬇️ 从服务器拉取</button>
+            </div>
+            <button id="btn-save-sync-config" class="primary-btn">💾 保存同步设置</button>
         </div>
     </div>
 

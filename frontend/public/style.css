@@ -468,6 +468,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    overflow-y: auto;
+    flex: 1;
 }
 
 .form-group {
@@ -700,6 +702,281 @@ body {
 
 .toast.is-visible {
     transform: translateX(-50%) translateY(0);
+}
+
+/* ===== ECDICT Badges ===== */
+.ecdict-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+    margin-bottom: 4px;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.badge-exam {
+    background: rgba(137, 180, 250, 0.15);
+    color: #89b4fa;
+    border: 1px solid rgba(137, 180, 250, 0.25);
+}
+
+.badge-collins {
+    background: rgba(249, 226, 175, 0.15);
+    color: #f9e2af;
+    border: 1px solid rgba(249, 226, 175, 0.25);
+}
+
+.badge-oxford {
+    background: rgba(166, 227, 161, 0.15);
+    color: #a6e3a1;
+    border: 1px solid rgba(166, 227, 161, 0.25);
+}
+
+.badge-freq {
+    background: rgba(203, 166, 247, 0.1);
+    color: #6c7086;
+    border: 1px solid rgba(203, 166, 247, 0.15);
+    font-size: 9px;
+}
+
+/* ===== Translation Block (ECDICT) ===== */
+.translation-block {
+    background: rgba(166, 227, 161, 0.06);
+    border: 1px solid rgba(166, 227, 161, 0.12);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+.translation-line {
+    font-size: 14px;
+    color: var(--text-primary);
+    line-height: 1.7;
+}
+
+/* ===== Inflected Forms ===== */
+.inflected-forms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-left: 8px;
+}
+
+.inflected-tag {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    background: var(--bg-tertiary);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.inflected-tag:hover {
+    background: var(--accent-dim);
+}
+
+.inflected-tag small {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+/* ===== Source Indicator ===== */
+.source-indicator {
+    font-size: 9px;
+    color: var(--text-muted);
+    opacity: 0.5;
+    margin-top: 8px;
+}
+
+/* ===== LLM Error Note ===== */
+.llm-error-note {
+    font-size: 11px;
+    color: var(--yellow);
+    opacity: 0.7;
+    margin-top: 8px;
+    padding: 4px 8px;
+    background: rgba(249, 226, 175, 0.06);
+    border-radius: 4px;
+}
+
+/* ===== Loading More (Phase 2 indicator) ===== */
+.loading-more {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: rgba(137, 180, 250, 0.06);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.loading-more-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--accent-dim);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+/* ===== ECDICT Import (Settings) ===== */
+.ecdict-group {
+    padding: 12px;
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.ecdict-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.ecdict-status {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ecdict-status.available {
+    color: var(--green);
+}
+
+.ecdict-status.unavailable {
+    color: var(--text-muted);
+}
+
+.import-btn {
+    padding: 6px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.import-btn:hover {
+    background: var(--accent-dim);
+    color: var(--text-primary);
+}
+
+.import-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ===== Sync Section ===== */
+.settings-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 20px 0;
+}
+
+.settings-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 12px 0;
+}
+
+.sync-info-box {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.sync-info-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.sync-info-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    min-width: 80px;
+}
+
+.sync-info-value {
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--bg-primary);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    flex: 1;
+    overflow-x: auto;
+    white-space: nowrap;
+    user-select: all;
+}
+
+.sync-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.secondary-btn {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+    background: var(--accent-dim);
+    color: var(--text-primary);
+}
+
+.secondary-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
 }
 
 /* ===== Utility ===== */

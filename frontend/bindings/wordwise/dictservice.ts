@@ -20,10 +20,27 @@ export function IsEnglishText(text: string): $CancellablePromise<boolean> {
 }
 
 /**
- * LookupWord calls LLM to get word definition
+ * LookupWord is the legacy combined method (kept for backward compat).
+ * It first tries ECDICT, then LLM, returning the merged result.
  */
 export function LookupWord(word: string): $CancellablePromise<string> {
     return $Call.ByID(688235267, word);
+}
+
+/**
+ * LookupWordFast returns ECDICT result immediately (offline, ~10ms).
+ * Returns JSON string of the ECDICT entry, or empty string if not found.
+ */
+export function LookupWordFast(word: string): $CancellablePromise<string> {
+    return $Call.ByID(1099801581, word);
+}
+
+/**
+ * LookupWordLLM calls LLM to get enriched word definition.
+ * This is the slow path (~2-10s), called after ECDICT fast result is shown.
+ */
+export function LookupWordLLM(word: string): $CancellablePromise<string> {
+    return $Call.ByID(1393846922, word);
 }
 
 /**
