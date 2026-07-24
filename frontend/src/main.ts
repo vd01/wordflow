@@ -1,18 +1,104 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLM, GetConfig, SaveConfig, ReadClipboard, IsEnglishText } from "../bindings/wordwise/dictservice.js";
+import { LookupWordFast, LookupWordLLM, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt } from "../bindings/wordwise/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordwise/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordwise/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, CreateUser, PushToServer, PullFromServer } from "../bindings/wordwise/syncservice.js";
+
+// ============================================================
+// PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
+// ============================================================
+interface PromptField {
+    key: string;
+    label: string;
+    icon: string;
+    type: "string" | "text" | "list" | "definitions";
+    desc: string;
+    enabled: boolean;
+    builtin: boolean;
+}
+
+interface PromptConfig {
+    systemPrompt: string;
+    fields: PromptField[];
+    extraRequirements: string;
+    temperature: number;
+    maxTokens: number;
+}
+
+const DEFINITIONS_SCHEMA_BLOCK = `  "definitions": [
+    {
+      "pos": "词性（如 n. / v. / adj. 等）",
+      "meaning": "中文释义",
+      "english_example": "英文例句",
+      "chinese_example": "例句中文翻译"
+    }
+  ]`;
+
+const SPECIAL_FIELD_KEYS = ["word", "phonetic", "pronunciation", "definitions"];
+
+function defaultPromptConfig(): PromptConfig {
+    return {
+        systemPrompt: "你是一个专业的英语词典助手，总是以纯JSON格式回复，不包含markdown标记。用户会给你一个英语单词或短语，你必须解释它。",
+        extraRequirements: "",
+        temperature: 0.3,
+        maxTokens: 2000,
+        fields: [
+            { key: "word", label: "单词", icon: "🔤", type: "string", desc: "被查询的英语单词或短语", enabled: true, builtin: true },
+            { key: "phonetic", label: "音标", icon: "🎵", type: "string", desc: "音标（国际音标）", enabled: true, builtin: true },
+            { key: "pronunciation", label: "发音提示", icon: "🗣️", type: "string", desc: "发音提示（用中文近似标注）", enabled: true, builtin: true },
+            { key: "definitions", label: "详细释义", icon: "📖", type: "definitions", desc: "包含词性、释义、英文例句及中文翻译", enabled: true, builtin: true },
+            { key: "memory_tips", label: "记忆技巧", icon: "🧠", type: "text", desc: "帮助记忆的技巧、词根词缀分析、联想记忆等", enabled: true, builtin: true },
+            { key: "synonyms", label: "近义词", icon: "📌", type: "list", desc: "近义词（如有）", enabled: true, builtin: true },
+            { key: "antonyms", label: "反义词", icon: "🚫", type: "list", desc: "反义词（如有）", enabled: true, builtin: true },
+            { key: "etymology", label: "词源", icon: "📚", type: "text", desc: "词源小故事（简短有趣）", enabled: true, builtin: true },
+        ],
+    };
+}
+
+let promptConfig: PromptConfig | null = null;
+
+/** Report whether a field is enabled. Unknown/missing config defaults to shown (backward compat). */
+function fieldEnabled(cfg: PromptConfig | null, key: string): boolean {
+    if (!cfg) return true;
+    for (const f of cfg.fields) if (f.key === key) return f.enabled;
+    return true;
+}
+
+/** Build a preview of the assembled user prompt (mirrors Go buildUserPrompt, without ECDICT context). */
+function buildPromptPreview(cfg: PromptConfig, word: string): string {
+    const lines: string[] = [];
+    for (const f of cfg.fields) {
+        if (!f.enabled) continue;
+        if (f.key === "word") lines.push(`  "word": "${word}"`);
+        else if (f.key === "definitions") lines.push(DEFINITIONS_SCHEMA_BLOCK);
+        else lines.push(`  "${f.key}": "${f.desc}"`);
+    }
+    const schema = "{\n" + lines.join(",\n") + "\n}";
+    let closing = "\n请确保返回纯JSON，不要有其他内容。";
+    if (fieldEnabled(cfg, "definitions")) closing += "如果有多个词性，请在definitions中分别列出。";
+    let extra = "";
+    if (cfg.extraRequirements.trim()) extra = "\n\n额外要求：" + cfg.extraRequirements;
+    return `请对英语单词或短语「${word}」进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n${schema}${closing}${extra}\n\n（实际查询时还会附带 ECDICT 已知信息以避免重复）`;
+}
+
+// Load prompt configuration at startup
+GetPromptConfig().then(json => {
+    if (json) {
+        try { promptConfig = JSON.parse(json); } catch { /* keep null */ }
+    }
+    if (!promptConfig) promptConfig = defaultPromptConfig();
+}).catch(err => {
+    promptConfig = defaultPromptConfig();
+    console.error("[WordWise] Failed to load prompt config:", err);
+});
 
 // ============================================================
 // DOM Elements
 // ============================================================
 const searchInput = document.getElementById("search-input") as HTMLInputElement;
 const btnSearch = document.getElementById("btn-search") as HTMLButtonElement;
-const btnPaste = document.getElementById("btn-paste") as HTMLButtonElement;
 const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
 const btnSettings = document.getElementById("btn-settings") as HTMLButtonElement;
-const btnMinimize = document.getElementById("btn-minimize") as HTMLButtonElement;
 const btnCloseHistory = document.getElementById("btn-close-history") as HTMLButtonElement;
 const btnCloseSettings = document.getElementById("btn-close-settings") as HTMLButtonElement;
 const btnClearHistory = document.getElementById("btn-clear-history") as HTMLButtonElement;
@@ -236,51 +322,55 @@ async function doSearch(word: string) {
  * Strategy: ECDICT base fields take priority; LLM fills in richer content
  */
 function mergeResults(ecdict: any, llm: any): any {
+    const cfg = promptConfig;
     const merged: any = { word: llm?.word || ecdict?.word || "" };
 
-    // Phonetic: prefer ECDICT if available (it's from a real dictionary)
-    // But LLM may provide IPA format which is better
-    if (ecdict?.phonetic && ecdict.phonetic.startsWith("/")) {
-        merged.phonetic = ecdict.phonetic;
-    } else if (llm?.phonetic) {
-        merged.phonetic = llm.phonetic;
-    } else {
-        merged.phonetic = ecdict?.phonetic || llm?.phonetic || "";
+    // Phonetic: prefer ECDICT IPA when available; otherwise LLM
+    if (fieldEnabled(cfg, "phonetic")) {
+        if (ecdict?.phonetic && ecdict.phonetic.startsWith("/")) {
+            merged.phonetic = ecdict.phonetic;
+        } else if (llm?.phonetic) {
+            merged.phonetic = llm.phonetic;
+        } else {
+            merged.phonetic = ecdict?.phonetic || llm?.phonetic || "";
+        }
     }
 
     // Pronunciation: only from LLM
-    merged.pronunciation = llm?.pronunciation || "";
-
-    // Translation: ECDICT Chinese translation is authoritative
-    merged.translation = ecdict?.translation || llm?.translation || "";
-
-    // Definitions: LLM provides structured definitions with examples
-    // ECDICT provides English definitions (less structured)
-    if (llm?.definitions && Array.isArray(llm.definitions) && llm.definitions.length > 0) {
-        merged.definitions = llm.definitions;
-    } else if (ecdict?.definition) {
-        // Fallback: parse ECDICT English definitions
-        merged.definitions = parseEcdictDefinitions(ecdict.definition, ecdict?.pos);
-    } else {
-        merged.definitions = [];
+    if (fieldEnabled(cfg, "pronunciation")) {
+        merged.pronunciation = llm?.pronunciation || "";
     }
 
-    // Memory tips: only from LLM
-    merged.memory_tips = llm?.memory_tips || "";
+    // Translation: ECDICT Chinese translation is authoritative (always shown)
+    merged.translation = ecdict?.translation || llm?.translation || "";
 
-    // Synonyms: combine both
-    const syns = new Set<string>();
-    if (ecdict?.synonyms) String(ecdict.synonyms).split(/[,，、;；\s]+/).filter(Boolean).forEach(s => syns.add(s));
-    if (llm?.synonyms) String(llm.synonyms).split(/[,，、;；\s]+/).filter(Boolean).forEach(s => syns.add(s));
-    merged.synonyms = [...syns].join(", ");
+    // Definitions: LLM structured definitions preferred, ECDICT fallback
+    if (fieldEnabled(cfg, "definitions")) {
+        if (llm?.definitions && Array.isArray(llm.definitions) && llm.definitions.length > 0) {
+            merged.definitions = llm.definitions;
+        } else if (ecdict?.definition) {
+            merged.definitions = parseEcdictDefinitions(ecdict.definition, ecdict?.pos);
+        } else {
+            merged.definitions = [];
+        }
+    }
 
-    // Antonyms: from LLM
-    merged.antonyms = llm?.antonyms || "";
+    // Other LLM fields driven by prompt config (skip special keys handled above)
+    if (cfg) {
+        for (const f of cfg.fields) {
+            if (!f.enabled || SPECIAL_FIELD_KEYS.includes(f.key)) continue;
+            const v = llm?.[f.key];
+            merged[f.key] = v !== undefined && v !== null ? v : "";
+        }
+    } else {
+        // Fallback: old hardcoded fields when config not yet loaded
+        merged.memory_tips = llm?.memory_tips || "";
+        merged.synonyms = llm?.synonyms || "";
+        merged.antonyms = llm?.antonyms || "";
+        merged.etymology = llm?.etymology || "";
+    }
 
-    // Etymology: from LLM
-    merged.etymology = llm?.etymology || "";
-
-    // ECDICT-specific fields
+    // ECDICT-specific fields (always present when available)
     merged.collins = ecdict?.collins ?? null;
     merged.oxford = ecdict?.oxford ?? null;
     merged.tag = ecdict?.tag || null;
@@ -335,15 +425,16 @@ function parseEcdictDefinitions(definition: string, pos?: string): any[] {
 // Render
 // ============================================================
 function renderWordResult(data: any, isLoadingMore: boolean): string {
+    const cfg = promptConfig;
     let html = '<div class="result-card">';
 
     // Word header
     html += '<div class="word-header">';
     html += `<span class="word-text">${escapeHtml(data.word || "")}</span>`;
-    if (data.phonetic) {
+    if (fieldEnabled(cfg, "phonetic") && data.phonetic) {
         html += `<span class="word-phonetic">${escapeHtml(data.phonetic)}</span>`;
     }
-    if (data.pronunciation) {
+    if (fieldEnabled(cfg, "pronunciation") && data.pronunciation) {
         html += `<span class="word-pronunciation">${escapeHtml(data.pronunciation)}</span>`;
     }
     html += "</div>";
@@ -369,10 +460,9 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
         html += '</div>';
     }
 
-    // ── Chinese Translation (from ECDICT - fast) ──
+    // ── Chinese Translation (from ECDICT - fast, always shown) ──
     if (data.translation) {
         html += '<div class="translation-block">';
-        // Translation may have multiple lines
         const transLines = String(data.translation).split("\n").filter(Boolean);
         for (const line of transLines) {
             html += `<div class="translation-line">${escapeHtml(line)}</div>`;
@@ -381,7 +471,7 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
     }
 
     // ── Definitions (from LLM with examples, or ECDICT fallback) ──
-    if (data.definitions && Array.isArray(data.definitions)) {
+    if (fieldEnabled(cfg, "definitions") && data.definitions && Array.isArray(data.definitions)) {
         for (const def of data.definitions) {
             html += '<div class="def-item">';
             if (def.pos) html += `<span class="def-pos">${escapeHtml(def.pos)}</span>`;
@@ -407,38 +497,53 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
         html += '</div>';
     }
 
-    // ── Memory tips (from LLM) ──
-    if (data.memory_tips) {
-        html += '<div class="section-title">🧠 记忆技巧</div>';
-        html += `<div class="section-content">${escapeHtml(data.memory_tips)}</div>`;
-    }
-
-    // ── Synonyms ──
-    if (data.synonyms) {
-        html += '<div class="section-title">📌 近义词</div>';
-        html += '<div class="section-content">';
-        const syns = String(data.synonyms).split(/[,，、;；\s]+/).filter(Boolean);
-        for (const s of syns) {
-            html += `<span class="synonym-tag" data-word="${escapeHtml(s)}">${escapeHtml(s)}</span>`;
+    // ── Generic content sections driven by prompt config ──
+    // Each enabled non-special field renders in config order (icon + label from config).
+    if (cfg) {
+        for (const f of cfg.fields) {
+            if (!f.enabled || SPECIAL_FIELD_KEYS.includes(f.key)) continue;
+            const val = data[f.key];
+            if (!val) continue;
+            html += `<div class="section-title">${escapeHtml(f.icon)} ${escapeHtml(f.label)}</div>`;
+            if (f.type === "list") {
+                html += '<div class="section-content">';
+                const items = String(val).split(/[,，、;；\s]+/).filter(Boolean);
+                for (const s of items) {
+                    html += `<span class="synonym-tag" data-word="${escapeHtml(s)}">${escapeHtml(s)}</span>`;
+                }
+                html += "</div>";
+            } else {
+                html += `<div class="section-content">${escapeHtml(String(val))}</div>`;
+            }
         }
-        html += "</div>";
-    }
-
-    // ── Antonyms ──
-    if (data.antonyms) {
-        html += '<div class="section-title">🚫 反义词</div>';
-        html += '<div class="section-content">';
-        const ants = String(data.antonyms).split(/[,，、;；\s]+/).filter(Boolean);
-        for (const a of ants) {
-            html += `<span class="synonym-tag" data-word="${escapeHtml(a)}">${escapeHtml(a)}</span>`;
+    } else {
+        // Fallback: old hardcoded sections when config not yet loaded
+        if (data.memory_tips) {
+            html += '<div class="section-title">🧠 记忆技巧</div>';
+            html += `<div class="section-content">${escapeHtml(data.memory_tips)}</div>`;
         }
-        html += "</div>";
-    }
-
-    // ── Etymology (from LLM) ──
-    if (data.etymology) {
-        html += '<div class="section-title">📚 词源</div>';
-        html += `<div class="section-content">${escapeHtml(data.etymology)}</div>`;
+        if (data.synonyms) {
+            html += '<div class="section-title">📌 近义词</div>';
+            html += '<div class="section-content">';
+            const syns = String(data.synonyms).split(/[,，、;；\s]+/).filter(Boolean);
+            for (const s of syns) {
+                html += `<span class="synonym-tag" data-word="${escapeHtml(s)}">${escapeHtml(s)}</span>`;
+            }
+            html += "</div>";
+        }
+        if (data.antonyms) {
+            html += '<div class="section-title">🚫 反义词</div>';
+            html += '<div class="section-content">';
+            const ants = String(data.antonyms).split(/[,，、;；\s]+/).filter(Boolean);
+            for (const a of ants) {
+                html += `<span class="synonym-tag" data-word="${escapeHtml(a)}">${escapeHtml(a)}</span>`;
+            }
+            html += "</div>";
+        }
+        if (data.etymology) {
+            html += '<div class="section-title">📚 词源</div>';
+            html += `<div class="section-content">${escapeHtml(data.etymology)}</div>`;
+        }
     }
 
     // ── Source indicator ──
@@ -608,27 +713,6 @@ async function importEcdict() {
 }
 
 // ============================================================
-// Clipboard
-// ============================================================
-async function pasteAndSearch() {
-    try {
-        const text = await ReadClipboard();
-        if (text) {
-            searchInput.value = text;
-            if (await IsEnglishText(text)) {
-                doSearch(text);
-            } else {
-                showToast("剪贴板内容不是英语单词/短语");
-            }
-        } else {
-            showToast("剪贴板为空");
-        }
-    } catch (err) {
-        console.error(err);
-    }
-}
-
-// ============================================================
 // Helpers
 // ============================================================
 function showError(msg: string) {
@@ -701,8 +785,6 @@ searchInput.addEventListener("keydown", (e) => {
         doSearch(word);
     }
 });
-
-btnPaste.addEventListener("click", pasteAndSearch);
 
 btnHistory.addEventListener("click", showHistory);
 btnCloseHistory.addEventListener("click", () => historyPanel.classList.add("hidden"));
@@ -800,6 +882,10 @@ inputShortcutKey.addEventListener("keyup", (e: KeyboardEvent) => {
 // Esc key to hide window
 document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Escape" && !isRecording) {
+        if (promptModal && !promptModal.classList.contains("hidden")) {
+            closePromptModal();
+            return;
+        }
         if (!historyDetailModal.classList.contains("hidden")) {
             historyDetailModal.classList.add("hidden");
             return;
@@ -814,10 +900,6 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
         }
         Events.Emit("hide-window");
     }
-});
-
-btnMinimize.addEventListener("click", () => {
-    Events.Emit("hide-window");
 });
 
 btnClearHistory.addEventListener("click", async () => {
@@ -1013,4 +1095,231 @@ btnSettings.removeEventListener("click", _origShowSettingsBtn as EventListener);
 btnSettings.addEventListener("click", async () => {
     await origShowSettings();
     await loadSyncConfig();
+});
+
+// ============================================================
+// Prompt Settings Modal
+// ============================================================
+const promptModal = document.getElementById("prompt-modal") as HTMLDivElement;
+const btnPromptSettings = document.getElementById("btn-prompt-settings") as HTMLButtonElement;
+const btnClosePromptModal = document.getElementById("btn-close-prompt-modal") as HTMLButtonElement;
+const promptSystemInput = document.getElementById("prompt-system") as HTMLTextAreaElement;
+const promptFieldsList = document.getElementById("prompt-fields-list") as HTMLDivElement;
+const btnAddField = document.getElementById("btn-add-field") as HTMLButtonElement;
+const promptExtraInput = document.getElementById("prompt-extra") as HTMLTextAreaElement;
+const promptTempRange = document.getElementById("prompt-temperature") as HTMLInputElement;
+const promptTempVal = document.getElementById("prompt-temp-val") as HTMLSpanElement;
+const promptMaxTokensInput = document.getElementById("prompt-max-tokens") as HTMLInputElement;
+const promptPreviewWordInput = document.getElementById("prompt-preview-word") as HTMLInputElement;
+const promptPreviewPre = document.getElementById("prompt-preview") as HTMLPreElement;
+const promptTestWordInput = document.getElementById("prompt-test-word") as HTMLInputElement;
+const btnPromptTest = document.getElementById("btn-prompt-test") as HTMLButtonElement;
+const promptTestResult = document.getElementById("prompt-test-result") as HTMLDivElement;
+const btnPromptReset = document.getElementById("btn-prompt-reset") as HTMLButtonElement;
+const btnPromptSave = document.getElementById("btn-prompt-save") as HTMLButtonElement;
+
+// Working copy of the config being edited in the modal
+let editorConfig: PromptConfig | null = null;
+let previewDebounce: ReturnType<typeof setTimeout>;
+
+function typeLabel(t: string): string {
+    if (t === "list") return "列表";
+    if (t === "definitions") return "释义(结构)";
+    return "文本";
+}
+
+function populateFromEditor() {
+    if (!editorConfig) return;
+    promptSystemInput.value = editorConfig.systemPrompt;
+    promptExtraInput.value = editorConfig.extraRequirements;
+    promptTempRange.value = String(editorConfig.temperature);
+    promptTempVal.textContent = String(editorConfig.temperature);
+    promptMaxTokensInput.value = String(editorConfig.maxTokens);
+    renderPromptFields();
+    updatePromptPreview();
+}
+
+function openPromptModal() {
+    GetPromptConfig().then(json => {
+        let parsed: PromptConfig | null = null;
+        if (json) { try { parsed = JSON.parse(json); } catch { /* ignore */ } }
+        editorConfig = parsed || defaultPromptConfig();
+        editorConfig = JSON.parse(JSON.stringify(editorConfig)); // deep copy
+        populateFromEditor();
+        showPromptModal();
+    }).catch(() => {
+        editorConfig = defaultPromptConfig();
+        populateFromEditor();
+        showPromptModal();
+    });
+}
+
+function showPromptModal() {
+    promptModal.classList.remove("hidden");
+    // Freeze the settings panel scrollbar while the modal is on top,
+    // so only the modal's own scrollbar is visible (no stacking).
+    settingsPanel.classList.add("behind-modal");
+}
+
+function closePromptModal() {
+    promptModal.classList.add("hidden");
+    settingsPanel.classList.remove("behind-modal");
+}
+
+function renderPromptFields() {
+    if (!editorConfig) return;
+    let html = "";
+    for (const f of editorConfig.fields) {
+        const isWord = f.key === "word";
+        const disabledCls = f.enabled ? "" : " disabled";
+        html += `<div class="prompt-field-card${disabledCls}" data-key="${escapeHtml(f.key)}">`;
+        html += '<div class="prompt-field-top">';
+        html += `<input class="pf-icon" value="${escapeHtml(f.icon)}" maxlength="6" data-prop="icon" title="图标"/>`;
+        html += `<input class="pf-label" value="${escapeHtml(f.label)}" placeholder="显示名" data-prop="label"/>`;
+        html += `<span class="pf-key${f.builtin ? " builtin-key" : ""}" title="${f.builtin ? "内置字段，不可删除" : "自定义字段"}">${f.builtin ? "🔒" : "🔑"} ${escapeHtml(f.key)}</span>`;
+        if (f.builtin) {
+            html += `<span class="pf-type">${escapeHtml(typeLabel(f.type))}</span>`;
+        } else {
+            html += `<select class="pf-type" data-prop="type" title="字段类型">`;
+            html += `<option value="text" ${f.type === "text" ? "selected" : ""}>文本</option>`;
+            html += `<option value="list" ${f.type === "list" ? "selected" : ""}>列表</option>`;
+            html += `</select>`;
+        }
+        html += `<label class="pf-toggle"><input type="checkbox" data-prop="enabled" ${f.enabled ? "checked" : ""} ${isWord ? "disabled" : ""}/> 启用</label>`;
+        html += `<button class="pf-delete" data-action="delete" ${f.builtin ? "disabled" : ""} title="${f.builtin ? "内置字段不可删除" : "删除字段"}">🗑️</button>`;
+        html += "</div>";
+        if (f.key === "definitions") {
+            html += '<div class="pf-hint">内置结构：词性 / 中文释义 / 英文例句 / 中文翻译（不可自定义结构）</div>';
+        } else if (isWord) {
+            html += '<div class="pf-hint">固定字段：用于标识被查询的单词</div>';
+        } else {
+            html += `<input class="pf-desc" value="${escapeHtml(f.desc)}" placeholder="说明（同时作为字段要求发给 AI）" data-prop="desc"/>`;
+        }
+        html += "</div>";
+    }
+    promptFieldsList.innerHTML = html;
+}
+
+function schedulePreview() {
+    clearTimeout(previewDebounce);
+    previewDebounce = setTimeout(updatePromptPreview, 200);
+}
+
+function updatePromptPreview() {
+    if (!editorConfig) return;
+    const word = promptPreviewWordInput.value.trim() || "example";
+    promptPreviewPre.textContent = buildPromptPreview(editorConfig, word);
+}
+
+async function testPromptAction() {
+    if (!editorConfig) return;
+    const word = promptTestWordInput.value.trim();
+    if (!word) { showToast("请输入测试单词"); return; }
+    btnPromptTest.disabled = true;
+    btnPromptTest.textContent = "测试中...";
+    promptTestResult.className = "prompt-test-result loading";
+    promptTestResult.textContent = "正在调用 LLM，请稍候...";
+    try {
+        const result = await TestPrompt(word, JSON.stringify(editorConfig));
+        let pretty = result;
+        try { pretty = JSON.stringify(JSON.parse(result), null, 2); } catch { /* show raw */ }
+        promptTestResult.className = "prompt-test-result ok";
+        promptTestResult.textContent = pretty;
+    } catch (err: any) {
+        promptTestResult.className = "prompt-test-result err";
+        promptTestResult.textContent = "❌ " + String(err);
+    } finally {
+        btnPromptTest.disabled = false;
+        btnPromptTest.textContent = "测试";
+    }
+}
+
+async function savePromptConfigAction() {
+    if (!editorConfig) return;
+    btnPromptSave.disabled = true;
+    const origText = btnPromptSave.textContent;
+    btnPromptSave.textContent = "保存中...";
+    try {
+        await SavePromptConfig(JSON.stringify(editorConfig));
+        promptConfig = JSON.parse(JSON.stringify(editorConfig));
+        showToast("提示词设置已保存 ✅");
+    } catch (err: any) {
+        showError("保存失败: " + String(err));
+    } finally {
+        btnPromptSave.disabled = false;
+        btnPromptSave.textContent = origText;
+    }
+}
+
+btnPromptSettings.addEventListener("click", openPromptModal);
+btnClosePromptModal.addEventListener("click", () => closePromptModal());
+promptModal.addEventListener("click", (e) => {
+    if (e.target === promptModal) closePromptModal();
+});
+
+btnAddField.addEventListener("click", () => {
+    if (!editorConfig) return;
+    const key = prompt("请输入字段标识（英文/数字/下划线，如 collocations）：", "custom_field");
+    if (!key) return;
+    const k = key.trim();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k)) { showToast("字段标识只能用英文字母、数字和下划线，且以字母开头"); return; }
+    if (SPECIAL_FIELD_KEYS.includes(k)) { showToast("该字段标识为保留字，请换一个"); return; }
+    if (editorConfig.fields.some(f => f.key === k)) { showToast("字段标识已存在"); return; }
+    editorConfig.fields.push({ key: k, label: k, icon: "🔹", type: "text", desc: "", enabled: true, builtin: false });
+    renderPromptFields();
+    schedulePreview();
+});
+
+promptFieldsList.addEventListener("input", (e) => {
+    const target = e.target as HTMLElement;
+    const card = target.closest(".prompt-field-card") as HTMLElement;
+    if (!card || !editorConfig) return;
+    const f = editorConfig.fields.find(x => x.key === card.dataset.key);
+    if (!f) return;
+    const prop = (target as any).dataset.prop;
+    if (prop === "icon") f.icon = (target as HTMLInputElement).value;
+    else if (prop === "label") f.label = (target as HTMLInputElement).value;
+    else if (prop === "desc") f.desc = (target as HTMLInputElement).value;
+    if (prop) schedulePreview();
+});
+
+promptFieldsList.addEventListener("change", (e) => {
+    const target = e.target as HTMLElement;
+    const card = target.closest(".prompt-field-card") as HTMLElement;
+    if (!card || !editorConfig) return;
+    const f = editorConfig.fields.find(x => x.key === card.dataset.key);
+    if (!f) return;
+    const prop = (target as any).dataset.prop;
+    if (prop === "enabled") {
+        f.enabled = (target as HTMLInputElement).checked;
+        card.classList.toggle("disabled", !f.enabled);
+    } else if (prop === "type") {
+        f.type = (target as HTMLSelectElement).value as PromptField["type"];
+    }
+    schedulePreview();
+});
+
+promptFieldsList.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const delBtn = target.closest(".pf-delete") as HTMLButtonElement;
+    if (!delBtn || delBtn.disabled || !editorConfig) return;
+    const card = delBtn.closest(".prompt-field-card") as HTMLElement;
+    const key = card.dataset.key!;
+    if (!confirm(`确定删除字段 “${key}” 吗？`)) return;
+    editorConfig.fields = editorConfig.fields.filter(f => f.key !== key);
+    renderPromptFields();
+    schedulePreview();
+});
+
+promptSystemInput.addEventListener("input", () => { if (editorConfig) editorConfig.systemPrompt = promptSystemInput.value; schedulePreview(); });
+promptExtraInput.addEventListener("input", () => { if (editorConfig) editorConfig.extraRequirements = promptExtraInput.value; schedulePreview(); });
+promptTempRange.addEventListener("input", () => { const v = parseFloat(promptTempRange.value); if (editorConfig) editorConfig.temperature = v; promptTempVal.textContent = promptTempRange.value; });
+promptMaxTokensInput.addEventListener("input", () => { const v = parseInt(promptMaxTokensInput.value, 10) || 2000; if (editorConfig) editorConfig.maxTokens = v; });
+promptPreviewWordInput.addEventListener("input", schedulePreview);
+btnPromptTest.addEventListener("click", testPromptAction);
+btnPromptSave.addEventListener("click", savePromptConfigAction);
+btnPromptReset.addEventListener("click", () => {
+    if (!confirm("确定恢复全部提示词设置为默认值吗？自定义字段将被移除。")) return;
+    editorConfig = defaultPromptConfig();
+    populateFromEditor();
 });

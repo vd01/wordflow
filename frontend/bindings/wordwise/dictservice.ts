@@ -13,6 +13,13 @@ export function GetConfig(): $CancellablePromise<{ [_ in string]?: string } | nu
 }
 
 /**
+ * GetPromptConfig returns the current prompt configuration as a JSON string.
+ */
+export function GetPromptConfig(): $CancellablePromise<string> {
+    return $Call.ByID(3674654971);
+}
+
+/**
  * IsEnglishText checks if text is English word/phrase
  */
 export function IsEnglishText(text: string): $CancellablePromise<boolean> {
@@ -55,4 +62,19 @@ export function ReadClipboard(): $CancellablePromise<string> {
  */
 export function SaveConfig(apiKey: string, apiURL: string, modelName: string, shortcutKey: string): $CancellablePromise<void> {
     return $Call.ByID(404939594, apiKey, apiURL, modelName, shortcutKey);
+}
+
+/**
+ * SavePromptConfig saves the prompt configuration (provided as a JSON string).
+ */
+export function SavePromptConfig(configJSON: string): $CancellablePromise<void> {
+    return $Call.ByID(2832855076, configJSON);
+}
+
+/**
+ * TestPrompt builds a prompt from the given config JSON and calls the LLM for a test word.
+ * Returns the raw LLM JSON response (same cleaning as LookupWordLLM).
+ */
+export function TestPrompt(word: string, configJSON: string): $CancellablePromise<string> {
+    return $Call.ByID(972792879, word, configJSON);
 }

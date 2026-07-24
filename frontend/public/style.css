@@ -27,6 +27,28 @@
     box-sizing: border-box;
 }
 
+/* ===== Thin scrollbars (global) =====
+   Replaces the chunky default scrollbars with slim ones so multiple
+   scroll areas no longer visually clump together. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent-dim) transparent;
+}
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+    background: var(--accent-dim);
+    border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
 body {
     font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
     background: var(--bg-primary);
@@ -125,7 +147,7 @@ body {
     color: var(--text-muted);
 }
 
-.search-btn, .paste-btn {
+.search-btn {
     padding: 10px 14px;
     border: none;
     border-radius: var(--radius);
@@ -141,16 +163,6 @@ body {
 
 .search-btn:hover {
     background: var(--accent-hover);
-}
-
-.paste-btn {
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-}
-
-.paste-btn:hover {
-    background: var(--accent-dim);
-    color: var(--text-primary);
 }
 
 .shortcut-hint {
@@ -642,7 +654,7 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.8);
     z-index: 200;
     display: flex;
     align-items: center;
@@ -680,6 +692,7 @@ body {
 
 .modal-body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 16px;
 }
@@ -982,4 +995,281 @@ body {
 /* ===== Utility ===== */
 .hidden {
     display: none !important;
+}
+
+/* ===== Prompt Settings ===== */
+.prompt-entry-btn {
+    width: 100%;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, var(--accent-dim), var(--bg-tertiary));
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+}
+.prompt-entry-btn:hover {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+}
+
+.prompt-modal-content {
+    width: 94%;
+    max-width: 560px;
+    max-height: 85vh;
+}
+.prompt-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* Textareas share input styling */
+.form-group textarea {
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+    resize: vertical;
+}
+.form-group textarea:focus {
+    border-color: var(--accent);
+}
+
+/* Advanced params */
+.prompt-advanced {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+}
+.prompt-advanced summary {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.prompt-advanced .form-group {
+    margin-top: 8px;
+}
+.form-group input[type="range"] {
+    padding: 0;
+    background: transparent;
+    border: none;
+    accent-color: var(--accent);
+    width: 100%;
+}
+.form-group input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Field list editor */
+.prompt-fields-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+}
+.prompt-field-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.prompt-field-card.disabled {
+    opacity: 0.55;
+}
+.prompt-field-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.pf-icon {
+    width: 34px;
+    padding: 6px;
+    text-align: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+}
+.pf-label {
+    flex: 1;
+    min-width: 70px;
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+}
+.pf-label:focus {
+    border-color: var(--accent);
+}
+.pf-key {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--mauve);
+    background: var(--bg-secondary);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border);
+}
+.pf-key.builtin-key {
+    border-style: solid;
+}
+.pf-type {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+.pf-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.pf-toggle input {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.pf-delete {
+    background: transparent;
+    border: none;
+    color: var(--red);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+}
+.pf-delete:hover {
+    background: rgba(243, 139, 168, 0.15);
+}
+.pf-delete[disabled] {
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+.pf-desc {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+}
+.pf-desc:focus {
+    border-color: var(--accent);
+}
+.pf-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* Preview & test */
+.prompt-preview-row,
+.prompt-test-row {
+    display: flex;
+    gap: 6px;
+}
+.prompt-preview-row input,
+.prompt-test-row input {
+    flex: 1;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+}
+.prompt-preview-row input:focus,
+.prompt-test-row input:focus {
+    border-color: var(--accent);
+}
+.prompt-preview-pre {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--green);
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* preview grows with content; .modal-body is the single scroller */
+    margin: 0;
+    font-family: ui-monospace, "SFMono-Regular", monospace;
+}
+.prompt-test-result {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow-y: auto;
+    font-family: ui-monospace, "SFMono-Regular", monospace;
+}
+.prompt-test-result.ok {
+    color: var(--green);
+    border-color: rgba(166, 227, 161, 0.4);
+}
+.prompt-test-result.err {
+    color: var(--red);
+    border-color: rgba(243, 139, 168, 0.4);
+}
+.prompt-test-result.loading {
+    color: var(--text-muted);
+}
+
+.prompt-modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+.prompt-modal-actions .primary-btn {
+    flex: 0 0 auto;
+    padding: 10px 20px;
+}
+.prompt-modal-actions .danger-btn {
+    padding: 10px 16px;
+    font-size: 13px;
+}
+
+/* Hide the settings panel's own scrollbar while a modal sits on top of it,
+   so the user only ever sees the modal's scrollbar (no stacking). */
+#settings-panel.behind-modal .settings-form {
+    overflow: hidden;
 }

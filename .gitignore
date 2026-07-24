@@ -11,3 +11,6 @@ build/android/overlay.json
 build/android/gen/
 # ECDICT data
 ECDICT/
+
+# Local screenshots / debug images
+001.png

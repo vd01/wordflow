@@ -54,6 +54,18 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
+		// Single-instance lock: prevents a second process from starting
+		// (which would otherwise create a duplicate system-tray icon).
+		// On a second launch attempt we just surface the existing window.
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.wordwise.app",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if w, ok := application.Get().Window.Get("main-window"); ok {
+					w.Show()
+					w.Focus()
+				}
+			},
+		},
 	})
 
 	// ---- System Tray ----
@@ -91,10 +103,10 @@ func main() {
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main-window",
 		Title:            "WordWise - 英语词典助手",
-		Width:            540,
-		Height:           760,
-		MinWidth:         420,
-		MinHeight:        600,
+		Width:            600,
+		Height:           820,
+		MinWidth:         460,
+		MinHeight:        640,
 		BackgroundColour: application.NewRGB(30, 30, 46),
 		URL:              "/",
 		Windows: application.WindowsWindow{
@@ -476,17 +488,134 @@ func (e *EcdictService) ImportEcdict(csvPath string) error {
 }
 
 // ============================================================
+// PromptConfig - user-customizable LLM prompt configuration
+// ============================================================
+
+// PromptField defines a single field the LLM should return and the UI should render.
+type PromptField struct {
+	Key     string `json:"key"`     // JSON key in LLM response & merged data
+	Label   string `json:"label"`   // Display name in UI
+	Icon    string `json:"icon"`    // Emoji icon for the section
+	Type    string `json:"type"`    // "string" | "text" | "list" | "definitions"
+	Desc    string `json:"desc"`    // Guidance: shown in UI AND injected into prompt schema (except definitions)
+	Enabled bool   `json:"enabled"` // Whether included in prompt & rendered
+	Builtin bool   `json:"builtin"` // Built-in field (key locked, not deletable)
+}
+
+// PromptConfig is the full user-editable prompt configuration.
+type PromptConfig struct {
+	SystemPrompt      string         `json:"systemPrompt"`
+	Fields            []PromptField `json:"fields"`
+	ExtraRequirements string         `json:"extraRequirements"`
+	Temperature       float64       `json:"temperature"`
+	MaxTokens         int           `json:"maxTokens"`
+}
+
+// definitionsSchemaBlock is the hardcoded JSON schema fragment for the definitions array.
+const definitionsSchemaBlock = `  "definitions": [
+    {
+      "pos": "词性（如 n. / v. / adj. 等）",
+      "meaning": "中文释义",
+      "english_example": "英文例句",
+      "chinese_example": "例句中文翻译"
+    }
+  ]`
+
+// defaultPromptConfig returns the built-in default prompt configuration.
+func defaultPromptConfig() *PromptConfig {
+	return &PromptConfig{
+		SystemPrompt:      "你是一个专业的英语词典助手，总是以纯JSON格式回复，不包含markdown标记。用户会给你一个英语单词或短语，你必须解释它。",
+		ExtraRequirements: "",
+		Temperature:       0.3,
+		MaxTokens:         2000,
+		Fields: []PromptField{
+			{Key: "word", Label: "单词", Icon: "🔤", Type: "string", Desc: "被查询的英语单词或短语", Enabled: true, Builtin: true},
+			{Key: "phonetic", Label: "音标", Icon: "🎵", Type: "string", Desc: "音标（国际音标）", Enabled: true, Builtin: true},
+			{Key: "pronunciation", Label: "发音提示", Icon: "🗣️", Type: "string", Desc: "发音提示（用中文近似标注）", Enabled: true, Builtin: true},
+			{Key: "definitions", Label: "详细释义", Icon: "📖", Type: "definitions", Desc: "包含词性、释义、英文例句及中文翻译", Enabled: true, Builtin: true},
+			{Key: "memory_tips", Label: "记忆技巧", Icon: "🧠", Type: "text", Desc: "帮助记忆的技巧、词根词缀分析、联想记忆等", Enabled: true, Builtin: true},
+			{Key: "synonyms", Label: "近义词", Icon: "📌", Type: "list", Desc: "近义词（如有）", Enabled: true, Builtin: true},
+			{Key: "antonyms", Label: "反义词", Icon: "🚫", Type: "list", Desc: "反义词（如有）", Enabled: true, Builtin: true},
+			{Key: "etymology", Label: "词源", Icon: "📚", Type: "text", Desc: "词源小故事（简短有趣）", Enabled: true, Builtin: true},
+		},
+	}
+}
+
+// fieldEnabled reports whether a field with the given key is enabled.
+func (c *PromptConfig) fieldEnabled(key string) bool {
+	for _, f := range c.Fields {
+		if f.Key == key {
+			return f.Enabled
+		}
+	}
+	return false
+}
+
+// mergePromptConfig overlays a saved config onto the defaults so newly-added
+// built-in fields appear for existing users while preserving their customizations.
+func mergePromptConfig(saved *PromptConfig) *PromptConfig {
+	def := defaultPromptConfig()
+	if saved == nil {
+		return def
+	}
+	result := &PromptConfig{
+		SystemPrompt:      saved.SystemPrompt,
+		ExtraRequirements: saved.ExtraRequirements,
+		Temperature:       saved.Temperature,
+		MaxTokens:         saved.MaxTokens,
+		Fields:            []PromptField{},
+	}
+	if result.SystemPrompt == "" {
+		result.SystemPrompt = def.SystemPrompt
+	}
+	if result.Temperature <= 0 {
+		result.Temperature = def.Temperature
+	}
+	if result.MaxTokens <= 0 {
+		result.MaxTokens = def.MaxTokens
+	}
+	savedByID := map[string]PromptField{}
+	for _, f := range saved.Fields {
+		savedByID[f.Key] = f
+	}
+	for _, df := range def.Fields {
+		if sv, ok := savedByID[df.Key]; ok {
+			f := df
+			f.Label = sv.Label
+			f.Icon = sv.Icon
+			f.Desc = sv.Desc
+			f.Enabled = sv.Enabled
+			if df.Key == "word" {
+				f.Enabled = true
+			}
+			result.Fields = append(result.Fields, f)
+			delete(savedByID, df.Key)
+		} else {
+			result.Fields = append(result.Fields, df)
+		}
+	}
+	for _, f := range saved.Fields {
+		if _, ok := savedByID[f.Key]; ok {
+			f.Builtin = false
+			result.Fields = append(result.Fields, f)
+		}
+	}
+	return result
+}
+
+// ============================================================
 // DictService - ECDICT fast lookup + LLM enrichment
 // ============================================================
 
 type DictService struct {
-	app         *application.App
-	apiKey      string
-	apiURL      string
-	modelName   string
-	shortcutKey string
-	ready       bool
-	ecdict      *EcdictService
+	app          *application.App
+	apiKey       string
+	apiURL       string
+	modelName    string
+	shortcutKey  string
+	ready        bool
+	ecdict       *EcdictService
+	promptConfig *PromptConfig
 }
 
 func (d *DictService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
@@ -520,6 +649,20 @@ func (d *DictService) ServiceStartup(ctx context.Context, options application.Se
 	if d.shortcutKey == "" {
 		d.shortcutKey = "Ctrl+Alt+Q"
 	}
+
+	// Load prompt configuration (falls back to defaults if missing)
+	promptPath := getConfigPath("prompt_config.json")
+	if pdata, perr := os.ReadFile(promptPath); perr == nil {
+		var savedCfg PromptConfig
+		if json.Unmarshal(pdata, &savedCfg) == nil {
+			d.promptConfig = mergePromptConfig(&savedCfg)
+		} else {
+			d.promptConfig = defaultPromptConfig()
+		}
+	} else {
+		d.promptConfig = defaultPromptConfig()
+	}
+
 	log.Println("DictService started, model:", d.modelName, "shortcut:", d.shortcutKey)
 	d.ready = true
 	d.registerShortcut()
@@ -558,56 +701,24 @@ func (d *DictService) LookupWordLLM(word string) (string, error) {
 		return "", fmt.Errorf("请输入要查询的单词或短语")
 	}
 
-	// Build context-aware prompt: if ECDICT has data, include it for richer LLM output
-	ecdictInfo := ""
-	if d.ecdict != nil {
-		if entry := d.ecdict.LookupEcdict(word); entry != nil {
-			parts := []string{}
-			if entry.Phonetic != "" {
-				parts = append(parts, "音标: "+entry.Phonetic)
-			}
-			if entry.Translation != "" {
-				parts = append(parts, "中文释义: "+entry.Translation)
-			}
-			if entry.Tag != "" {
-				parts = append(parts, "考试标签: "+entry.Tag)
-			}
-			if len(parts) > 0 {
-				ecdictInfo = "\n\n已知基础信息（ECDICT离线词典）：\n" + strings.Join(parts, "\n") + "\n\n请在以上基础上补充更丰富的内容，避免重复已有信息。"
-			}
-		}
+	cfg := d.promptConfig
+	if cfg == nil {
+		cfg = defaultPromptConfig()
 	}
-
-	prompt := fmt.Sprintf(`请对英语单词或短语「%s」进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：
-
-{
-  "word": "%s",
-  "phonetic": "音标（国际音标）",
-  "pronunciation": "发音提示（用中文近似标注）",
-  "definitions": [
-    {
-      "pos": "词性（如 n. / v. / adj. 等）",
-      "meaning": "中文释义",
-      "english_example": "英文例句",
-      "chinese_example": "例句中文翻译"
-    }
-  ],
-  "memory_tips": "帮助记忆的技巧、词根词缀分析、联想记忆等",
-  "synonyms": "近义词（如有）",
-  "antonyms": "反义词（如有）",
-  "etymology": "词源小故事（简短有趣）"
+	prompt := d.buildUserPrompt(cfg, word, true)
+	return d.callLLM(cfg.SystemPrompt, prompt, cfg.Temperature, cfg.MaxTokens)
 }
 
-请确保返回纯JSON，不要有其他内容。如果有多个词性，请在definitions中分别列出。%s`, word, word, ecdictInfo)
-
+// callLLM sends a chat-completion request and returns the cleaned JSON content.
+func (d *DictService) callLLM(system, user string, temperature float64, maxTokens int) (string, error) {
 	reqBody := map[string]interface{}{
 		"model": d.modelName,
 		"messages": []map[string]string{
-			{"role": "system", "content": "你是一个专业的英语词典助手，总是以纯JSON格式回复，不包含markdown标记。用户会给你一个英语单词或短语，你必须解释它。"},
-			{"role": "user", "content": prompt},
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
 		},
-		"temperature": 0.3,
-		"max_tokens":  2000,
+		"temperature": temperature,
+		"max_tokens":  maxTokens,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -696,6 +807,63 @@ func (d *DictService) LookupWordLLM(word string) (string, error) {
 	return content, nil
 }
 
+// buildEcdictInfo returns the ECDICT context fragment appended to the user prompt
+// when the word exists in the offline dictionary.
+func (d *DictService) buildEcdictInfo(word string) string {
+	if d.ecdict == nil {
+		return ""
+	}
+	entry := d.ecdict.LookupEcdict(word)
+	if entry == nil {
+		return ""
+	}
+	parts := []string{}
+	if entry.Phonetic != "" {
+		parts = append(parts, "音标: "+entry.Phonetic)
+	}
+	if entry.Translation != "" {
+		parts = append(parts, "中文释义: "+entry.Translation)
+	}
+	if entry.Tag != "" {
+		parts = append(parts, "考试标签: "+entry.Tag)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\n已知基础信息（ECDICT离线词典）：\n" + strings.Join(parts, "\n") + "\n\n请在以上基础上补充更丰富的内容，避免重复已有信息。"
+}
+
+// buildUserPrompt assembles the user message from the prompt config and word.
+func (d *DictService) buildUserPrompt(cfg *PromptConfig, word string, includeEcdict bool) string {
+	var lines []string
+	for _, f := range cfg.Fields {
+		if !f.Enabled {
+			continue
+		}
+		if f.Key == "word" {
+			lines = append(lines, fmt.Sprintf(`  "word": "%s"`, word))
+		} else if f.Key == "definitions" {
+			lines = append(lines, definitionsSchemaBlock)
+		} else {
+			lines = append(lines, fmt.Sprintf(`  "%s": "%s"`, f.Key, f.Desc))
+		}
+	}
+	schema := "{\n" + strings.Join(lines, ",\n") + "\n}"
+	closing := "\n请确保返回纯JSON，不要有其他内容。"
+	if cfg.fieldEnabled("definitions") {
+		closing += "如果有多个词性，请在definitions中分别列出。"
+	}
+	extra := ""
+	if strings.TrimSpace(cfg.ExtraRequirements) != "" {
+		extra = "\n\n额外要求：" + cfg.ExtraRequirements
+	}
+	ecdictInfo := ""
+	if includeEcdict {
+		ecdictInfo = d.buildEcdictInfo(word)
+	}
+	return fmt.Sprintf("请对英语单词或短语「%s」进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n%s\n%s%s%s", word, schema, closing, extra, ecdictInfo)
+}
+
 // LookupWord is the legacy combined method (kept for backward compat).
 // It first tries ECDICT, then LLM, returning the merged result.
 func (d *DictService) LookupWord(word string) (string, error) {
@@ -745,6 +913,54 @@ func (d *DictService) GetConfig() map[string]string {
 		"modelName":   d.modelName,
 		"shortcutKey": d.shortcutKey,
 	}
+}
+
+// GetPromptConfig returns the current prompt configuration as a JSON string.
+func (d *DictService) GetPromptConfig() string {
+	cfg := d.promptConfig
+	if cfg == nil {
+		cfg = defaultPromptConfig()
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// SavePromptConfig saves the prompt configuration (provided as a JSON string).
+func (d *DictService) SavePromptConfig(configJSON string) error {
+	var cfg PromptConfig
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		return fmt.Errorf("提示词配置格式错误: %v", err)
+	}
+	merged := mergePromptConfig(&cfg)
+	d.promptConfig = merged
+	configPath := getConfigPath("prompt_config.json")
+	data, _ := json.MarshalIndent(merged, "", "  ")
+	return os.WriteFile(configPath, data, 0644)
+}
+
+// TestPrompt builds a prompt from the given config JSON and calls the LLM for a test word.
+// Returns the raw LLM JSON response (same cleaning as LookupWordLLM).
+func (d *DictService) TestPrompt(word string, configJSON string) (string, error) {
+	if !d.ready {
+		return "", fmt.Errorf("服务正在初始化，请稍后重试")
+	}
+	if d.apiKey == "" {
+		return "", fmt.Errorf("请先设置 API Key")
+	}
+	word = strings.TrimSpace(word)
+	if word == "" {
+		return "", fmt.Errorf("请输入测试单词")
+	}
+	var cfg PromptConfig
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		return "", fmt.Errorf("提示词配置格式错误: %v", err)
+	}
+	merged := mergePromptConfig(&cfg)
+	prompt := d.buildUserPrompt(merged, word, true)
+	return d.callLLM(merged.SystemPrompt, prompt, merged.Temperature, merged.MaxTokens)
 }
 
 // ReadClipboard reads text from system clipboard

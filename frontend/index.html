@@ -17,7 +17,6 @@
         <div class="header-right">
             <button id="btn-history" class="icon-btn" title="查询历史">📋</button>
             <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
-            <button id="btn-minimize" class="icon-btn" title="最小化到托盘">➖</button>
         </div>
     </header>
 
@@ -26,7 +25,6 @@
         <div class="search-bar">
             <input type="text" id="search-input" placeholder="输入英语单词或短语..." autocomplete="off" spellcheck="false"/>
             <button id="btn-search" class="search-btn" title="查询">🔍</button>
-            <button id="btn-paste" class="paste-btn" title="粘贴剪贴板">📋</button>
         </div>
         <div class="shortcut-hint">全局快捷键: <kbd id="shortcut-display">Ctrl+Alt+Q</kbd> ｜ <kbd>Esc</kbd> 隐藏窗口</div>
     </div>
@@ -82,6 +80,10 @@
                 <label for="model-name">模型名称</label>
                 <input type="text" id="model-name" placeholder="gpt-4o-mini"/>
                 <small class="form-hint">推荐 gpt-4o-mini，性价比高</small>
+            </div>
+            <div class="form-group">
+                <button id="btn-prompt-settings" class="prompt-entry-btn" type="button">📝 大模型提示词与返回字段设置</button>
+                <small class="form-hint">自定义 AI 角色设定、返回内容字段及额外要求；查询界面会自动适配新增字段</small>
             </div>
             <div class="form-group">
                 <label for="shortcut-key">呼出快捷键</label>
@@ -144,6 +146,70 @@
                 <button id="btn-close-modal" class="icon-btn">✕</button>
             </div>
             <div id="modal-body" class="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Prompt Settings Modal -->
+    <div id="prompt-modal" class="modal hidden">
+        <div class="modal-content prompt-modal-content">
+            <div class="modal-header">
+                <h2>📝 提示词设置</h2>
+                <button id="btn-close-prompt-modal" class="icon-btn">✕</button>
+            </div>
+            <div class="modal-body prompt-modal-body">
+                <div class="form-group">
+                    <label for="prompt-system">🤖 AI 角色设定</label>
+                    <textarea id="prompt-system" rows="3" placeholder="告诉 AI 它是谁、应如何回答..."></textarea>
+                    <small class="form-hint">系统提示词，决定 AI 的整体风格</small>
+                </div>
+
+                <div class="form-group">
+                    <label>📋 返回内容字段</label>
+                    <small class="form-hint">勾选的字段会同时出现在提示词与查询结果中；“说明”文本会作为字段要求发给 AI</small>
+                    <div id="prompt-fields-list" class="prompt-fields-list"></div>
+                    <button id="btn-add-field" class="secondary-btn" type="button" style="width:100%;margin-top:8px;">➕ 添加自定义字段</button>
+                </div>
+
+                <div class="form-group">
+                    <label for="prompt-extra">➕ 额外要求（可选）</label>
+                    <textarea id="prompt-extra" rows="3" placeholder="如：用初中生能懂的语言；释义不超过3条；加入常见搭配..."></textarea>
+                    <small class="form-hint">附加在提示词末尾的额外指令</small>
+                </div>
+
+                <details class="prompt-advanced">
+                    <summary>⚙️ 高级参数</summary>
+                    <div class="form-group">
+                        <label for="prompt-temperature">Temperature: <span id="prompt-temp-val">0.3</span></label>
+                        <input type="range" id="prompt-temperature" min="0" max="1" step="0.1" value="0.3"/>
+                    </div>
+                    <div class="form-group">
+                        <label for="prompt-max-tokens">Max Tokens</label>
+                        <input type="number" id="prompt-max-tokens" value="2000" min="256" max="8192"/>
+                    </div>
+                </details>
+
+                <div class="form-group">
+                    <label>👁️ 提示词预览</label>
+                    <div class="prompt-preview-row">
+                        <input type="text" id="prompt-preview-word" placeholder="示例单词..." value="example"/>
+                    </div>
+                    <pre id="prompt-preview" class="prompt-preview-pre"></pre>
+                </div>
+
+                <div class="form-group">
+                    <label>🧪 真实调用测试</label>
+                    <div class="prompt-test-row">
+                        <input type="text" id="prompt-test-word" placeholder="输入单词测试调用..."/>
+                        <button id="btn-prompt-test" class="secondary-btn" type="button">测试</button>
+                    </div>
+                    <div id="prompt-test-result" class="prompt-test-result"></div>
+                </div>
+
+                <div class="prompt-modal-actions">
+                    <button id="btn-prompt-reset" class="danger-btn" type="button">↩️ 恢复默认</button>
+                    <button id="btn-prompt-save" class="primary-btn" type="button">💾 保存</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
