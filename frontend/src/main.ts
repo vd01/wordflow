@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo } from "../bindings/wordwise/dictservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordwise/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordwise/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordwise/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, CreateUser, PushToServer, PullFromServer } from "../bindings/wordwise/syncservice.js";
@@ -126,6 +126,7 @@ const inputModelName = document.getElementById("model-name") as HTMLInputElement
 const inputShortcutKey = document.getElementById("shortcut-key") as HTMLInputElement;
 const btnRecordShortcut = document.getElementById("btn-record-shortcut") as HTMLButtonElement;
 const btnToggleKey = document.getElementById("btn-toggle-key") as HTMLButtonElement;
+const autoStartToggle = document.getElementById("auto-start-toggle") as HTMLInputElement;
 
 // ============================================================
 // State
@@ -699,6 +700,7 @@ async function showSettings() {
         inputApiUrl.value = config.apiURL || "";
         inputModelName.value = config.modelName || "";
         inputShortcutKey.value = config.shortcutKey || "Ctrl+Alt+Q";
+        autoStartToggle.checked = config.autoStart === "true";
         const display = document.getElementById("shortcut-display");
         if (display && config.shortcutKey) display.textContent = config.shortcutKey;
 
@@ -900,6 +902,17 @@ btnToggleKey.addEventListener("click", () => {
     } else {
         inputApiKey.type = "password";
         btnToggleKey.textContent = "👁️";
+    }
+});
+
+// Auto-start toggle
+autoStartToggle.addEventListener("change", async () => {
+    try {
+        await SetAutoStart(autoStartToggle.checked);
+        showToast(autoStartToggle.checked ? "Auto-start enabled ✅" : "Auto-start disabled");
+    } catch (err: any) {
+        autoStartToggle.checked = !autoStartToggle.checked;
+        showError("Failed to set auto-start: " + String(err));
     }
 });
 

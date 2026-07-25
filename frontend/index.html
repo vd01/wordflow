@@ -156,9 +156,16 @@
 
             <!-- Other Tab -->
             <div id="settings-tab-other" class="settings-tab-page">
-                <div class="settings-other-placeholder">
-                    <span class="settings-other-icon">🚧</span>
-                    <p>More settings coming soon...</p>
+                <div class="form-group">
+                    <label>🚀 Auto-start on System Boot</label>
+                    <div class="toggle-row">
+                        <span class="toggle-label">Launch WordWise when Windows starts</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-start-toggle"/>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <small class="form-hint">Adds WordWise to Windows startup registry (HKCU\...\Run)</small>
                 </div>
             </div>
             <div id="settings-tab-debug" class="settings-tab-page">

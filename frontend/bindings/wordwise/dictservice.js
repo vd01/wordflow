@@ -19,6 +19,14 @@ export function CacheResult(word, result) {
 }
 
 /**
+ * GetAutoStart returns whether auto-start is currently enabled.
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function GetAutoStart() {
+    return $Call.ByID(1447106028);
+}
+
+/**
  * GetCacheStats returns cache statistics for debugging.
  * @returns {$CancellablePromise<{ [_ in string]?: any }>}
  */
@@ -147,6 +155,16 @@ export function SaveConfig(apiKey, apiURL, modelName, shortcutKey) {
  */
 export function SavePromptConfig(configJSON) {
     return $Call.ByID(2832855076, configJSON);
+}
+
+/**
+ * SetAutoStart enables or disables auto-start on system boot.
+ * On Windows it writes/removes a Run registry key under HKCU.
+ * @param {boolean} enable
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetAutoStart(enable) {
+    return $Call.ByID(2918338240, enable);
 }
 
 /**

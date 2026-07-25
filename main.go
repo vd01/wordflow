@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -764,6 +765,7 @@ type DictService struct {
 	apiURL       string
 	modelName    string
 	shortcutKey  string
+	autoStart    bool
 	ready        bool
 	ecdict       *EcdictService
 	promptConfig *PromptConfig
@@ -802,6 +804,9 @@ func (d *DictService) ServiceStartup(ctx context.Context, options application.Se
 			if v, ok := cfg["shortcutKey"]; ok && v != "" {
 				d.shortcutKey = v
 			}
+			if v, ok := cfg["autoStart"]; ok {
+				d.autoStart, _ = strconv.ParseBool(v)
+			}
 		}
 	}
 	if d.apiURL == "" {
@@ -812,6 +817,18 @@ func (d *DictService) ServiceStartup(ctx context.Context, options application.Se
 	}
 	if d.shortcutKey == "" {
 		d.shortcutKey = "Ctrl+Alt+Q"
+	}
+
+	// Sync auto-start state with registry (in case registry was manually changed)
+	if d.autoStart && !checkAutoStartRegistry() {
+		log.Println("Auto-start was enabled in config but missing from registry, re-enabling...")
+		if err := enableAutoStart(); err != nil {
+			log.Printf("Failed to re-enable auto-start: %v", err)
+			d.autoStart = false
+		}
+	} else if !d.autoStart && checkAutoStartRegistry() {
+		log.Println("Auto-start was disabled in config but still in registry, removing...")
+		disableAutoStart()
 	}
 
 	// Load prompt configuration (falls back to defaults if missing)
@@ -1200,6 +1217,7 @@ func (d *DictService) SaveConfig(apiKey, apiURL, modelName, shortcutKey string) 
 		"apiURL":      d.apiURL,
 		"modelName":   d.modelName,
 		"shortcutKey": d.shortcutKey,
+		"autoStart":   strconv.FormatBool(d.autoStart),
 	}, "", "  ")
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		return err
@@ -1223,7 +1241,88 @@ func (d *DictService) GetConfig() map[string]string {
 		"apiURL":      d.apiURL,
 		"modelName":   d.modelName,
 		"shortcutKey": d.shortcutKey,
+		"autoStart":   strconv.FormatBool(d.autoStart),
 	}
+}
+
+// SetAutoStart enables or disables auto-start on system boot.
+// On Windows it writes/removes a Run registry key under HKCU.
+func (d *DictService) SetAutoStart(enable bool) error {
+	d.autoStart = enable
+
+	// Persist to config.json
+	configPath := getConfigPath("config.json")
+	data, _ := json.MarshalIndent(map[string]string{
+		"apiKey":      d.apiKey,
+		"apiURL":      d.apiURL,
+		"modelName":   d.modelName,
+		"shortcutKey": d.shortcutKey,
+		"autoStart":   strconv.FormatBool(enable),
+	}, "", "  ")
+	os.WriteFile(configPath, data, 0644)
+
+	if enable {
+		return enableAutoStart()
+	}
+	return disableAutoStart()
+}
+
+// GetAutoStart returns whether auto-start is currently enabled.
+func (d *DictService) GetAutoStart() bool {
+	return d.autoStart
+}
+
+// enableAutoStart adds the app to HKCU\...\Run registry key.
+func enableAutoStart() error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get exe path: %w", err)
+	}
+	// Resolve symlinks
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve exe path: %w", err)
+	}
+
+	// Use reg.exe to add the registry entry (no CGo needed)
+	cmd := exec.Command("reg", "add",
+		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+		"/v", "WordWise",
+		"/t", "REG_SZ",
+		"/d", `"`+exePath+`"`,
+		"/f",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reg add failed: %w, output: %s", err, string(output))
+	}
+	log.Printf("Auto-start enabled: %s", exePath)
+	return nil
+}
+
+// disableAutoStart removes the app from HKCU\...\Run registry key.
+func disableAutoStart() error {
+	cmd := exec.Command("reg", "delete",
+		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+		"/v", "WordWise",
+		"/f",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reg delete failed: %w, output: %s", err, string(output))
+	}
+	log.Println("Auto-start disabled")
+	return nil
+}
+
+// checkAutoStartRegistry checks if the Run key exists for WordWise.
+func checkAutoStartRegistry() bool {
+	cmd := exec.Command("reg", "query",
+		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+		"/v", "WordWise",
+	)
+	err := cmd.Run()
+	return err == nil
 }
 
 // GetCacheStats returns cache statistics for debugging.
