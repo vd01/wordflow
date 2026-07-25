@@ -14,3 +14,8 @@ ECDICT/
 
 # Local screenshots / debug images
 001.png
+# WeChat Mini Program (miniprogram/)
+miniprogram/node_modules/
+miniprogram/miniprogram_npm/
+miniprogram/dist/
+miniprogram/ci/private.key

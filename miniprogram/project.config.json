@@ -1,0 +1,26 @@
+{
+  "description": "WordWise Mini Program — FSRS flashcards via SyncServer",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "appid": "wxcf0e31a667b6fe79",
+  "projectname": "wordwise-miniprogram",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "babelSetting": { "ignoreList": [] }
+  },
+  "packOptions": {
+    "ignore": [
+      { "type": "folder", "value": "node_modules" },
+      { "type": "folder", "value": "__tests__" },
+      { "type": "folder", "value": "ci" },
+      { "type": "file", "value": "jest.config.js" },
+      { "type": "file", "value": "package.json" },
+      { "type": "file", "value": "package-lock.json" }
+    ]
+  }
+}
