@@ -4,6 +4,8 @@
 const WORDS_KEY = 'wordwise_words'     // { [id]: SyncEntry }
 const REVIEWS_KEY = 'wordwise_reviews' // { [id]: FsrsCard }
 const LASTSYNC_KEY = 'wordwise_lastsync' // last successful pull (serverNow, unix seconds)
+const DAILY_LIMIT_KEY = 'wordwise_daily_limit' // max new cards per day (0 = unlimited)
+const DAILY_COUNT_KEY = 'wordwise_daily_count' // { date: 'YYYY-MM-DD', newCount: N }
 
 function getWords() {
   try { return wx.getStorageSync(WORDS_KEY) || {} } catch (e) { return {} }
@@ -107,9 +109,57 @@ function handleStorageError(e) {
   console.error('Storage write failed:', msg)
 }
 
+// --- Daily review limit ---
+
+function todayStr() {
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+
+function getDailyLimit() {
+  try { return wx.getStorageSync(DAILY_LIMIT_KEY) || 0 } catch (e) { return 0 }
+}
+
+function setDailyLimit(n) {
+  try { wx.setStorageSync(DAILY_LIMIT_KEY, n) } catch (e) { handleStorageError(e) }
+}
+
+/** Get today's new-card count. Returns { date, newCount } */
+function getDailyCount() {
+  try {
+    const c = wx.getStorageSync(DAILY_COUNT_KEY)
+    if (c && c.date === todayStr()) return c
+    return { date: todayStr(), newCount: 0 }
+  } catch (e) {
+    return { date: todayStr(), newCount: 0 }
+  }
+}
+
+/** Increment today's new-card count by 1 */
+function incrementDailyNewCount() {
+  const c = getDailyCount()
+  c.newCount++
+  try { wx.setStorageSync(DAILY_COUNT_KEY, c) } catch (e) { handleStorageError(e) }
+}
+
+/** Decrement today's new-card count by 1 (for undo) */
+function decrementDailyNewCount() {
+  const c = getDailyCount()
+  if (c.newCount > 0) c.newCount--
+  try { wx.setStorageSync(DAILY_COUNT_KEY, c) } catch (e) { handleStorageError(e) }
+}
+
+/** Check if daily new-card limit is reached */
+function isDailyNewLimitReached() {
+  const limit = getDailyLimit()
+  if (limit <= 0) return false
+  return getDailyCount().newCount >= limit
+}
+
 module.exports = {
   getWords, setWords, mergePulled, wordList, getWord, parseResult,
   getReviews, setReviews, getReview, saveReview, removeReview,
   getLastSync, setLastSync,
-  WORDS_KEY, REVIEWS_KEY, LASTSYNC_KEY
+  getDailyLimit, setDailyLimit, getDailyCount, incrementDailyNewCount, decrementDailyNewCount, isDailyNewLimitReached,
+  WORDS_KEY, REVIEWS_KEY, LASTSYNC_KEY, DAILY_LIMIT_KEY, DAILY_COUNT_KEY
 }

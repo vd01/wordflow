@@ -24,10 +24,13 @@ function formatSyncTime(ts) {
 }
 
 function refreshCounts() {
+  const dailyCount = store.getDailyCount()
   return {
     wordCount: store.wordList().length,
     dueCount: fsrsEngine.getQueueCounts(store.getWords(), store.getReviews()).total,
-    lastSyncDisplay: formatSyncTime(store.getLastSync())
+    lastSyncDisplay: formatSyncTime(store.getLastSync()),
+    dailyLimit: store.getDailyLimit(),
+    dailyNewCount: dailyCount.newCount
   }
 }
 
@@ -87,6 +90,11 @@ Page({
 
   onAddr(e) { this.setData({ serverAddr: e.detail.value }) },
   onToken(e) { this.setData({ token: e.detail.value }) },
+  onDailyLimit(e) {
+    const n = parseInt(e.detail.value, 10) || 0
+    this.setData({ dailyLimit: n })
+    store.setDailyLimit(n)
+  },
 
   save() {
     if (!this.data.serverAddr) {

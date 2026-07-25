@@ -35,7 +35,12 @@ Page({
     emptyState: false,
 
     // Error state
-    errorMsg: ''
+    errorMsg: '',
+
+    // Daily limit
+    dailyLimit: 0,
+    dailyNewCount: 0,
+    dailyNewRemaining: -1
   },
 
   onLoad() {
@@ -56,7 +61,15 @@ Page({
     try {
       const words = store.getWords()
       const reviews = store.getReviews()
-      const queue = fsrsEngine.getDueQueue(words, reviews)
+      const limit = store.getDailyLimit()
+      const dailyCount = store.getDailyCount()
+      // Calculate how many new cards are still allowed today
+      let dailyNewRemaining = -1 // -1 = unlimited
+      if (limit > 0) {
+        dailyNewRemaining = Math.max(0, limit - dailyCount.newCount)
+      }
+      const queue = fsrsEngine.getDueQueue(words, reviews, dailyNewRemaining)
+      const counts = fsrsEngine.getQueueCounts(words, reviews)
 
       this.setData({
         queue,
@@ -70,7 +83,10 @@ Page({
         remainingDue: 0,
         emptyState: queue.length === 0,
         undoStack: [],
-        errorMsg: ''
+        errorMsg: '',
+        dailyLimit: limit,
+        dailyNewCount: dailyCount.newCount,
+        dailyNewRemaining: dailyNewRemaining
       })
 
       if (queue.length > 0) {
@@ -180,6 +196,10 @@ Page({
     try {
       const result = fsrsEngine.rateCard(card, rating)
       store.saveReview(card.id || this.data.entry.id, result.card)
+      // Track new card count for daily limit
+      if (!card || card.state === 0) { // STATE_NEW = 0
+        store.incrementDailyNewCount()
+      }
     } catch (e) {
       this.setData({ errorMsg: '评分处理失败，请重试' })
       undoStack.pop()
@@ -216,6 +236,10 @@ Page({
 
     try {
       store.saveReview(last.card.id, last.card)
+      // Undo new card count if the undone card was new
+      if (last.card.state === 0) { // STATE_NEW = 0
+        store.decrementDailyNewCount()
+      }
     } catch (e) {}
 
     this.setData({

@@ -7,6 +7,7 @@
     <view class="session-stats">
       <text class="stat-item">Remaining: {{remaining}}</text>
       <text class="stat-item">Reviewed: {{reviewed}}</text>
+      <text class="stat-item" wx:if="{{dailyLimit > 0}}">New: {{dailyNewCount}}/{{dailyLimit}}</text>
     </view>
   </view>
 
@@ -37,6 +38,7 @@
         </view>
       </view>
       <view class="done-hint" wx:if="{{remainingDue > 0}}">{{remainingDue}} cards still due</view>
+      <view class="done-hint" wx:elif="{{dailyLimit > 0 && dailyNewCount >= dailyLimit}}">Daily new word limit reached ({{dailyLimit}}) — review existing cards tomorrow!</view>
       <view class="done-hint" wx:else>All caught up — see you next time!</view>
     </view>
     <view class="done-actions">

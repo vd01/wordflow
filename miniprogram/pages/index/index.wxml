@@ -24,6 +24,12 @@
     <view class="muted" style="margin-top:8rpx">上次同步：{{lastSyncDisplay || '从未'}}</view>
   </view>
 
+  <view class="card">
+    <view class="muted">每日新词上限（0 = 无限制）</view>
+    <input class="input" type="number" value="{{dailyLimit}}" bindinput="onDailyLimit" placeholder="0 = 无限制" />
+    <view class="muted" style="margin-top:8rpx">今日已学新词：{{dailyNewCount}}{{dailyLimit > 0 ? ' / ' + dailyLimit : ''}}</view>
+  </view>
+
   <view class="muted" style="margin:16rpx 0">{{status}}</view>
 
   <view class="btn" bindtap="goWordList">单词本</view>
