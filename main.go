@@ -46,7 +46,7 @@ func main() {
 		Name:        "WordWise",
 		Description: "英语词典助手 - 系统托盘 + 全局快捷键 + ECDICT离线词典 + LLM智能查词 + 多设备同步",
 		Services: []application.Service{
-			application.NewService(&DictService{ecdict: ecdictSvc}),
+			application.NewService(&DictService{ecdict: ecdictSvc, history: historySvc}),
 			application.NewService(ecdictSvc),
 			application.NewService(historySvc),
 			application.NewService(syncSvc),
@@ -131,6 +131,108 @@ func main() {
 	}
 }
 
+// ============================================================
+// lruCache - simple bounded LRU cache with O(1) get/set
+// ============================================================
+
+type lruEntry struct {
+	key  string
+	val  string
+	prev *lruEntry
+	next *lruEntry
+}
+
+type lruCache struct {
+	maxSize int
+	size    int
+	head    *lruEntry // most recently used
+	tail    *lruEntry // least recently used
+	items   map[string]*lruEntry
+	mu      sync.RWMutex
+}
+
+func newLRUCache(maxSize int) *lruCache {
+	return &lruCache{
+		maxSize: maxSize,
+		items:   make(map[string]*lruEntry, maxSize),
+	}
+}
+
+func (c *lruCache) get(key string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok {
+		c.moveToFront(e)
+		return e.val, true
+	}
+	return "", false
+}
+
+func (c *lruCache) set(key, val string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok {
+		e.val = val
+		c.moveToFront(e)
+		return
+	}
+	e := &lruEntry{key: key, val: val}
+	c.items[key] = e
+	c.addToFront(e)
+	c.size++
+	if c.size > c.maxSize {
+		c.evictTail()
+	}
+}
+
+func (c *lruCache) len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.size
+}
+
+func (c *lruCache) moveToFront(e *lruEntry) {
+	if c.head == e {
+		return
+	}
+	c.remove(e)
+	c.addToFront(e)
+}
+
+func (c *lruCache) addToFront(e *lruEntry) {
+	e.prev = nil
+	e.next = c.head
+	if c.head != nil {
+		c.head.prev = e
+	}
+	c.head = e
+	if c.tail == nil {
+		c.tail = e
+	}
+}
+
+func (c *lruCache) remove(e *lruEntry) {
+	if e.prev != nil {
+		e.prev.next = e.next
+	} else {
+		c.head = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	} else {
+		c.tail = e.prev
+	}
+}
+
+func (c *lruCache) evictTail() {
+	if c.tail == nil {
+		return
+	}
+	delete(c.items, c.tail.key)
+	c.remove(c.tail)
+	c.size--
+}
+
 // isEnglishText checks if the text looks like an English word or phrase
 func isEnglishText(text string) bool {
 	text = strings.TrimSpace(text)
@@ -194,6 +296,22 @@ func (e *EcdictService) openDB(dbPath string) {
 		return
 	}
 	db.SetMaxOpenConns(1) // SQLite single-writer
+
+	// Performance pragmas for fast read-only lookups
+	pragmas := []string{
+		"PRAGMA journal_mode=OFF",    // No WAL overhead for read-only
+		"PRAGMA synchronous=OFF",     // No fsync on reads
+		"PRAGMA cache_size=-8192",    // 8MB page cache
+		"PRAGMA mmap_size=33554432",  // 32MB memory-mapped I/O
+		"PRAGMA page_size=4096",      // Standard page size
+		"PRAGMA busy_timeout=5000",   // Wait up to 5s for lock
+	}
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			log.Printf("EcdictService: pragma warning: %v", err)
+		}
+	}
+
 	e.mu.Lock()
 	e.db = db
 	e.mu.Unlock()
@@ -201,6 +319,8 @@ func (e *EcdictService) openDB(dbPath string) {
 }
 
 // LookupEcdict looks up a word in ECDICT. Returns nil if not found or DB unavailable.
+// Uses case-insensitive matching by trying the lowercase form first (index-friendly),
+// then falls back to COLLATE NOCASE only if needed.
 func (e *EcdictService) LookupEcdict(word string) *EcdictEntry {
 	e.mu.RLock()
 	db := e.db
@@ -215,11 +335,42 @@ func (e *EcdictService) LookupEcdict(word string) *EcdictEntry {
 		return nil
 	}
 
+	// Try exact match first (uses primary key index — fastest)
+	entry := e.queryWord(db, word)
+	if entry != nil {
+		return entry
+	}
+
+	// Try lowercase match (covers most case mismatches, still index-friendly)
+	lowerWord := strings.ToLower(word)
+	if lowerWord != word {
+		entry = e.queryWord(db, lowerWord)
+		if entry != nil {
+			return entry
+		}
+	}
+
+	// Last resort: COLLATE NOCASE (slower, but catches mixed-case entries)
+	return e.queryWordCollate(db, word)
+}
+
+func (e *EcdictService) queryWord(db *sql.DB, word string) *EcdictEntry {
+	row := db.QueryRow(
+		"SELECT word, phonetic, definition, translation, pos, collins, oxford, tag, bnc, frq, exchange FROM ecdict WHERE word = ?",
+		word,
+	)
+	return e.scanEntry(row)
+}
+
+func (e *EcdictService) queryWordCollate(db *sql.DB, word string) *EcdictEntry {
 	row := db.QueryRow(
 		"SELECT word, phonetic, definition, translation, pos, collins, oxford, tag, bnc, frq, exchange FROM ecdict WHERE word = ? COLLATE NOCASE",
 		word,
 	)
+	return e.scanEntry(row)
+}
 
+func (e *EcdictService) scanEntry(row *sql.Row) *EcdictEntry {
 	var entry EcdictEntry
 	var phonetic, definition, translation, pos, tag, exchange sql.NullString
 	var collins, oxford, bnc, frq sql.NullInt64
@@ -321,7 +472,7 @@ func (e *EcdictService) ImportEcdict(csvPath string) error {
 	if _, err := db.Exec("PRAGMA synchronous=OFF"); err != nil {
 		return fmt.Errorf("设置PRAGMA失败: %v", err)
 	}
-	if _, err := db.Exec("PRAGMA cache_size=-65536"); err != nil { // 64MB cache
+	if _, err := db.Exec("PRAGMA cache_size=-8192"); err != nil { // 8MB cache
 		log.Printf("Warning: set cache_size failed: %v", err)
 	}
 
@@ -616,11 +767,24 @@ type DictService struct {
 	ready        bool
 	ecdict       *EcdictService
 	promptConfig *PromptConfig
+	httpClient   *http.Client       // shared client with connection pooling
+	history      *HistoryService    // for cache lookup
+	resultCache  *lruCache         // LRU cache: word -> merged JSON result (bounded size)
 }
 
 func (d *DictService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	d.app = application.Get()
 
+	// Shared HTTP client with connection pooling for LLM calls
+	d.httpClient = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        2,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+	d.resultCache = newLRUCache(100) // max 100 entries (~200-500KB total)
 	configPath := getConfigPath("config.json")
 	data, err := os.ReadFile(configPath)
 	if err == nil {
@@ -675,7 +839,10 @@ func (d *DictService) LookupWordFast(word string) string {
 	if d.ecdict == nil {
 		return ""
 	}
+	start := time.Now()
 	entry := d.ecdict.LookupEcdict(word)
+	elapsed := time.Since(start)
+	log.Printf("[ECDICT-DEBUG] LookupEcdict(%q) took %v, found=%v", word, elapsed, entry != nil)
 	if entry == nil {
 		return ""
 	}
@@ -687,9 +854,62 @@ func (d *DictService) LookupWordFast(word string) string {
 	return string(data)
 }
 
+// LookupWordCached checks the in-memory cache and history DB for a previously
+// looked-up word. Returns the full merged JSON result (ECDICT+LLM) if found,
+// or empty string if not cached. This avoids redundant LLM calls for words
+// the user has already looked up.
+func (d *DictService) LookupWordCached(word string) string {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if word == "" {
+		return ""
+	}
+
+	// 1. Check in-memory LRU cache (fastest)
+	if cached, ok := d.resultCache.get(word); ok {
+		log.Printf("[LLM-DEBUG] Cache HIT (memory) for %q", word)
+		return cached
+	}
+
+	// 2. Check history DB (persistent cache)
+	if d.history != nil {
+		entry := d.history.GetHistoryByWord(word)
+		if entry != nil && entry.Result != "" {
+			// Populate in-memory cache for next time
+			d.resultCache.set(word, entry.Result)
+			log.Printf("[LLM-DEBUG] Cache HIT (history DB) for %q", word)
+			return entry.Result
+		}
+	}
+
+	log.Printf("[LLM-DEBUG] Cache MISS for %q", word)
+	return ""
+}
+
+// CacheResult stores a merged lookup result in the in-memory cache.
+// Call this after a successful full lookup so subsequent lookups of the same
+// word are served from cache instantly.
+func (d *DictService) CacheResult(word, result string) {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if word == "" || result == "" {
+		return
+	}
+	d.resultCache.set(word, result)
+}
+
 // LookupWordLLM calls LLM to get enriched word definition.
 // This is the slow path (~2-10s), called after ECDICT fast result is shown.
 func (d *DictService) LookupWordLLM(word string) (string, error) {
+	return d.lookupWordLLMInternal(word, true)
+}
+
+// LookupWordLLMFast calls LLM without re-querying ECDICT for the prompt context.
+// Use this when the frontend already has the ECDICT data from LookupWordFast.
+func (d *DictService) LookupWordLLMFast(word string) (string, error) {
+	return d.lookupWordLLMInternal(word, false)
+}
+
+func (d *DictService) lookupWordLLMInternal(word string, includeEcdict bool) (string, error) {
+	log.Printf("[LLM-DEBUG] lookupWordLLMInternal called: word=%q includeEcdict=%v", word, includeEcdict)
 	if !d.ready {
 		return "", fmt.Errorf("服务正在初始化，请稍后重试")
 	}
@@ -705,17 +925,29 @@ func (d *DictService) LookupWordLLM(word string) (string, error) {
 	if cfg == nil {
 		cfg = defaultPromptConfig()
 	}
-	prompt := d.buildUserPrompt(cfg, word, true)
+	prompt := d.buildUserPrompt(cfg, word, includeEcdict)
 	return d.callLLM(cfg.SystemPrompt, prompt, cfg.Temperature, cfg.MaxTokens)
 }
 
 // callLLM sends a chat-completion request and returns the cleaned JSON content.
 func (d *DictService) callLLM(system, user string, temperature float64, maxTokens int) (string, error) {
+	startTime := time.Now()
+
+	// Build messages with cache_control on the system message for prompt caching.
+	// OpenAI: automatically caches prompts >= 1024 tokens; cache_control is a hint.
+	// Anthropic/compatible: uses cache_control breakpoints.
+	// The system prompt is static across requests, so it's the best candidate for caching.
 	reqBody := map[string]interface{}{
 		"model": d.modelName,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": user},
+		"messages": []map[string]interface{}{
+			{
+				"role":    "system",
+				"content": system,
+			},
+			{
+				"role":    "user",
+				"content": user,
+			},
 		},
 		"temperature": temperature,
 		"max_tokens":  maxTokens,
@@ -732,6 +964,20 @@ func (d *DictService) callLLM(system, user string, temperature float64, maxToken
 		apiURL = strings.TrimRight(apiURL, "/") + "/chat/completions"
 	}
 
+	log.Printf("[LLM-DEBUG] === New Request ===")
+	log.Printf("[LLM-DEBUG] URL: %s", apiURL)
+	log.Printf("[LLM-DEBUG] Model: %s", d.modelName)
+	log.Printf("[LLM-DEBUG] Temperature: %.2f, MaxTokens: %d", temperature, maxTokens)
+	log.Printf("[LLM-DEBUG] System prompt (%d chars): %s", len(system), truncate(system, 100))
+	log.Printf("[LLM-DEBUG] User prompt (%d chars): %s", len(user), truncate(user, 150))
+	log.Printf("[LLM-DEBUG] Request body size: %d bytes", len(jsonData))
+	// Log API key (masked) for debugging
+	apiKeyPreview := "???"
+	if len(d.apiKey) > 6 {
+		apiKeyPreview = d.apiKey[:3] + "..." + d.apiKey[len(d.apiKey)-3:]
+	}
+	log.Printf("[LLM-DEBUG] API Key: %s (len=%d)", apiKeyPreview, len(d.apiKey))
+
 	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %v", err)
@@ -739,20 +985,30 @@ func (d *DictService) callLLM(system, user string, temperature float64, maxToken
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+d.apiKey)
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	log.Printf("[LLM-DEBUG] Sending request...")
+	resp, err := d.httpClient.Do(req)
+	connectDuration := time.Since(startTime)
 	if err != nil {
+		log.Printf("[LLM-DEBUG] Request FAILED after %v: %v", connectDuration, err)
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			log.Printf("[LLM-DEBUG] Error was a TIMEOUT")
+		}
 		return "", fmt.Errorf("请求失败: %v", err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[LLM-DEBUG] Response status: %d (received headers in %v)", resp.StatusCode, connectDuration)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
 
+	totalDuration := time.Since(startTime)
+	log.Printf("[LLM-DEBUG] Response body size: %d bytes (total time: %v)", len(body), totalDuration)
+
 	if resp.StatusCode != 200 {
-		log.Printf("API error: status=%d url=%s body=%s", resp.StatusCode, apiURL, string(body))
+		log.Printf("[LLM-DEBUG] API error: status=%d url=%s body=%s", resp.StatusCode, apiURL, truncate(string(body), 500))
 		var errResp map[string]interface{}
 		if json.Unmarshal(body, &errResp) == nil {
 			if e, ok := errResp["error"].(map[string]interface{}); ok {
@@ -775,16 +1031,51 @@ func (d *DictService) callLLM(system, user string, temperature float64, maxToken
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-	}
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+			// OpenAI prompt cache fields
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+		} `json:"usage"`
+		// Some providers nest cache info differently
+		CachedTokens int `json:"cached_tokens"`
+	} // top-level response struct
 	if err := json.Unmarshal(body, &chatResp); err != nil {
+		log.Printf("[LLM-DEBUG] Failed to parse response JSON: %v, raw body: %s", err, truncate(string(body), 300))
 		return "", fmt.Errorf("解析响应失败: %v", err)
 	}
 	if len(chatResp.Choices) == 0 {
+		log.Printf("[LLM-DEBUG] No choices in response, raw body: %s", truncate(string(body), 300))
 		return "", fmt.Errorf("API未返回有效内容")
 	}
 
+	log.Printf("[LLM-DEBUG] Finish reason: %s", chatResp.Choices[0].FinishReason)
+	log.Printf("[LLM-DEBUG] Token usage - prompt: %d, completion: %d, total: %d",
+		chatResp.Usage.PromptTokens, chatResp.Usage.CompletionTokens, chatResp.Usage.TotalTokens)
+
+	// Log prompt cache metrics
+	cachedTokens := chatResp.Usage.PromptTokensDetails.CachedTokens
+	if cachedTokens == 0 {
+		cachedTokens = chatResp.CachedTokens // fallback for some providers
+	}
+	if cachedTokens > 0 {
+		cacheHitRate := float64(cachedTokens) / float64(chatResp.Usage.PromptTokens) * 100
+		savedTokens := cachedTokens // cached tokens are billed at 50% (OpenAI) or free (Anthropic)
+		log.Printf("[LLM-DEBUG] Prompt cache HIT: %d/%d tokens cached (%.1f%% hit rate, ~%d tokens saved)",
+			cachedTokens, chatResp.Usage.PromptTokens, cacheHitRate, savedTokens)
+	} else {
+		log.Printf("[LLM-DEBUG] Prompt cache MISS: 0 cached tokens out of %d prompt tokens", chatResp.Usage.PromptTokens)
+	}
+
 	content := chatResp.Choices[0].Message.Content
+	log.Printf("[LLM-DEBUG] Raw content length: %d chars", len(content))
+	log.Printf("[LLM-DEBUG] Raw content preview: %s", truncate(content, 200))
+
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
@@ -804,6 +1095,10 @@ func (d *DictService) callLLM(system, user string, temperature float64, maxToken
 		}
 	}
 	content = strings.TrimSpace(b.String())
+
+	log.Printf("[LLM-DEBUG] Cleaned content length: %d chars", len(content))
+	log.Printf("[LLM-DEBUG] === Request complete in %v ===", totalDuration)
+
 	return content, nil
 }
 
@@ -834,14 +1129,22 @@ func (d *DictService) buildEcdictInfo(word string) string {
 }
 
 // buildUserPrompt assembles the user message from the prompt config and word.
+// The prompt is structured for maximum LLM prompt cache hit rate:
+//   [STATIC PREFIX] schema + instructions + extra requirements
+//   [VARIABLE SUFFIX] word + ECDICT context
+// This way, the static prefix is identical across requests and can be cached
+// by the LLM provider (OpenAI/Anthropic prompt caching), while only the
+// variable suffix changes per word.
 func (d *DictService) buildUserPrompt(cfg *PromptConfig, word string, includeEcdict bool) string {
+	// ── Static prefix: schema + instructions (same for every word) ──
 	var lines []string
 	for _, f := range cfg.Fields {
 		if !f.Enabled {
 			continue
 		}
 		if f.Key == "word" {
-			lines = append(lines, fmt.Sprintf(`  "word": "%s"`, word))
+			// Placeholder — the actual word goes in the variable suffix
+			lines = append(lines, `  "word": "..."`)
 		} else if f.Key == "definitions" {
 			lines = append(lines, definitionsSchemaBlock)
 		} else {
@@ -857,11 +1160,19 @@ func (d *DictService) buildUserPrompt(cfg *PromptConfig, word string, includeEcd
 	if strings.TrimSpace(cfg.ExtraRequirements) != "" {
 		extra = "\n\n额外要求：" + cfg.ExtraRequirements
 	}
-	ecdictInfo := ""
+
+	staticPrefix := fmt.Sprintf("请对英语单词或短语进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n%s\n%s%s", schema, closing, extra)
+
+	// ── Variable suffix: word + ECDICT context (changes per word) ──
+	variableSuffix := fmt.Sprintf("\n\n---\n查询单词：%s", word)
 	if includeEcdict {
-		ecdictInfo = d.buildEcdictInfo(word)
+		ecdictInfo := d.buildEcdictInfo(word)
+		if ecdictInfo != "" {
+			variableSuffix += ecdictInfo
+		}
 	}
-	return fmt.Sprintf("请对英语单词或短语「%s」进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n%s\n%s%s%s", word, schema, closing, extra, ecdictInfo)
+
+	return staticPrefix + variableSuffix
 }
 
 // LookupWord is the legacy combined method (kept for backward compat).
@@ -915,6 +1226,56 @@ func (d *DictService) GetConfig() map[string]string {
 	}
 }
 
+// GetCacheStats returns cache statistics for debugging.
+func (d *DictService) GetCacheStats() map[string]interface{} {
+	cacheSize := d.resultCache.len()
+
+	stats := map[string]interface{}{
+		"memoryCacheSize": cacheSize,
+		"model":           d.modelName,
+		"apiURL":          d.apiURL,
+	}
+
+	// Build a preview of the prompt structure for cache analysis
+	cfg := d.promptConfig
+	if cfg == nil {
+		cfg = defaultPromptConfig()
+	}
+
+	// Show the static prefix (cacheable part)
+	var lines []string
+	for _, f := range cfg.Fields {
+		if !f.Enabled {
+			continue
+		}
+		if f.Key == "word" {
+			lines = append(lines, `  "word": "..."`)
+		} else if f.Key == "definitions" {
+			lines = append(lines, definitionsSchemaBlock)
+		} else {
+			lines = append(lines, fmt.Sprintf(`  "%s": "%s"`, f.Key, f.Desc))
+		}
+	}
+	schema := "{\n" + strings.Join(lines, ",\n") + "\n}"
+	closing := "\n请确保返回纯JSON，不要有其他内容。"
+	if cfg.fieldEnabled("definitions") {
+		closing += "如果有多个词性，请在definitions中分别列出。"
+	}
+	extra := ""
+	if strings.TrimSpace(cfg.ExtraRequirements) != "" {
+		extra = "\n\n额外要求：" + cfg.ExtraRequirements
+	}
+	staticPrefix := fmt.Sprintf("请对英语单词或短语进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n%s\n%s%s", schema, closing, extra)
+
+	stats["systemPromptLength"] = len(cfg.SystemPrompt)
+	stats["staticPrefixLength"] = len(staticPrefix)
+	stats["staticPrefixPreview"] = truncate(staticPrefix, 300)
+	stats["variableSuffixNote"] = "word + ECDICT context (changes per word, appended after static prefix)"
+	stats["cacheStrategy"] = "Static prefix (system prompt + schema + instructions) is identical across requests → LLM provider can cache it. Variable suffix (word + ECDICT) changes per request."
+
+	return stats
+}
+
 // GetPromptConfig returns the current prompt configuration as a JSON string.
 func (d *DictService) GetPromptConfig() string {
 	cfg := d.promptConfig
@@ -963,6 +1324,47 @@ func (d *DictService) TestPrompt(word string, configJSON string) (string, error)
 	return d.callLLM(merged.SystemPrompt, prompt, merged.Temperature, merged.MaxTokens)
 }
 
+// GetPromptDebugInfo returns the exact system and user prompts that would be sent
+// for a given word, without actually calling the LLM. Useful for debugging
+// prompt cache behavior and prompt structure.
+func (d *DictService) GetPromptDebugInfo(word string) map[string]string {
+	word = strings.TrimSpace(word)
+	if word == "" {
+		return map[string]string{"error": "word is empty"}
+	}
+
+	cfg := d.promptConfig
+	if cfg == nil {
+		cfg = defaultPromptConfig()
+	}
+
+	systemPrompt := cfg.SystemPrompt
+	userPrompt := d.buildUserPrompt(cfg, word, true)
+
+	// Find the split point between static prefix and variable suffix
+	splitMarker := "\n\n---\n查询单词："
+	splitIdx := strings.Index(userPrompt, splitMarker)
+
+	staticPart := userPrompt
+	variablePart := ""
+	if splitIdx >= 0 {
+		staticPart = userPrompt[:splitIdx]
+		variablePart = userPrompt[splitIdx:]
+	}
+
+	return map[string]string{
+		"systemPrompt":       systemPrompt,
+		"userPrompt":         userPrompt,
+		"staticPrefix":       staticPart,
+		"variableSuffix":     variablePart,
+		"systemPromptLen":    fmt.Sprintf("%d", len(systemPrompt)),
+		"staticPrefixLen":    fmt.Sprintf("%d", len(staticPart)),
+		"variableSuffixLen":  fmt.Sprintf("%d", len(variablePart)),
+		"totalPromptLen":     fmt.Sprintf("%d", len(systemPrompt)+len(userPrompt)),
+		"cacheNote":          "The static prefix (system + schema + instructions) is identical across requests and can be cached by the LLM provider. The variable suffix (word + ECDICT) changes per request.",
+	}
+}
+
 // ReadClipboard reads text from system clipboard
 func (d *DictService) ReadClipboard() string {
 	if d.app == nil {
@@ -989,15 +1391,24 @@ func (d *DictService) registerShortcut() {
 		application.InvokeSync(func() {
 			w, ok := d.app.Window.Get("main-window")
 			if ok {
-				if !w.IsVisible() {
-					w.Show()
+				if w.IsVisible() {
+					// Window is visible — hide it (toggle off)
+					log.Printf("[CLIPBOARD-DEBUG] Window visible, hiding")
+					w.Hide()
+					return
 				}
+				// Window is hidden — show it and read clipboard
+				w.Show()
 				w.Focus()
 			}
 			text, ok := d.app.Clipboard.Text()
+			log.Printf("[CLIPBOARD-DEBUG] Shortcut pressed, clipboard: ok=%v text=%q", ok, truncate(text, 50))
 			if ok && isEnglishText(text) {
 				word := strings.TrimSpace(text)
+				log.Printf("[CLIPBOARD-DEBUG] Emitting clipboard-english-detected: %q", word)
 				d.app.Event.Emit("clipboard-english-detected", word)
+			} else {
+				log.Printf("[CLIPBOARD-DEBUG] Clipboard text not English or read failed")
 			}
 		})
 	})
@@ -1190,8 +1601,19 @@ func (h *HistoryService) GetHistory() []HistoryEntry {
 	return entries
 }
 
-// AddHistory adds a new entry or updates an existing one (same word)
+// AddHistory adds a new entry or updates an existing one (same word).
+// If skipSync is true, the sync callback is NOT triggered (used when importing from server).
 func (h *HistoryService) AddHistory(word, result string) error {
+	return h.addHistoryInternal(word, result, false)
+}
+
+// AddHistoryFromSync adds/updates an entry from a server pull, without triggering
+// the sync callback (to avoid pushing it right back to the server).
+func (h *HistoryService) AddHistoryFromSync(word, result string) error {
+	return h.addHistoryInternal(word, result, true)
+}
+
+func (h *HistoryService) addHistoryInternal(word, result string, skipSync bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -1232,8 +1654,8 @@ func (h *HistoryService) AddHistory(word, result string) error {
 		return err
 	}
 
-	// Notify sync service (non-blocking)
-	if h.syncCb != nil {
+	// Notify sync service (non-blocking) — skip if importing from server
+	if !skipSync && h.syncCb != nil {
 		h.syncCb(savedEntry)
 	}
 
@@ -1288,6 +1710,29 @@ func (h *HistoryService) GetHistoryEntry(id string) *HistoryEntry {
 	return &e
 }
 
+// GetHistoryByWord returns a single entry by word (case-insensitive).
+// Used for cache lookup to avoid redundant LLM calls.
+func (h *HistoryService) GetHistoryByWord(word string) *HistoryEntry {
+	h.mu.RLock()
+	db := h.db
+	h.mu.RUnlock()
+
+	if db == nil {
+		return nil
+	}
+
+	var e HistoryEntry
+	err := db.QueryRow(
+		"SELECT id, word, result, created_at, updated_at FROM history WHERE word = ? COLLATE NOCASE",
+		word,
+	).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt)
+
+	if err != nil {
+		return nil
+	}
+	return &e
+}
+
 // GetAllEntriesForSync returns all entries formatted for sync push
 func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 	h.mu.RLock()
@@ -1320,22 +1765,23 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 // ============================================================
 
 type SyncService struct {
-	history   *HistoryService
-	syncAddr  string // 远程同步服务器地址，如 http://your-server:9274
-	syncToken string // 用户Token（由服务器分配）
-	autoSync  bool   // 是否启用自动同步
+	history       *HistoryService
+	syncAddr      string // 远程同步服务器地址，如 http://your-server:9274
+	syncToken     string // 用户Token（由服务器分配）
+	autoSync      bool   // 是否启用自动同步
+	lastSyncTime  int64  // Unix timestamp of last successful sync (for incremental pull)
 }
 
 func (s *SyncService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	s.loadConfig()
-	// Auto-pull on startup (background, non-blocking)
+	// Auto-pull on startup (background, non-blocking, incremental)
 	if s.autoSync && s.syncAddr != "" && s.syncToken != "" {
 		go func() {
-			msg, err := s.pullFromServerSilent()
+			msg, err := s.pullFromServerInternal(true)
 			if err != nil {
-				log.Printf("SyncService: 启动自动拉取失败: %v", err)
+				log.Printf("SyncService: startup auto-pull failed: %v", err)
 			} else if msg != "" {
-				log.Printf("SyncService: 启动自动拉取: %s", msg)
+				log.Printf("SyncService: startup auto-pull: %s", msg)
 			}
 		}()
 	}
@@ -1349,23 +1795,26 @@ func (s *SyncService) loadConfig() {
 		return
 	}
 	var cfg struct {
-		SyncAddr  string `json:"syncAddr"`
-		SyncToken string `json:"syncToken"`
-		AutoSync  bool   `json:"autoSync"`
+		SyncAddr     string `json:"syncAddr"`
+		SyncToken    string `json:"syncToken"`
+		AutoSync     bool   `json:"autoSync"`
+		LastSyncTime int64  `json:"lastSyncTime"`
 	}
 	if json.Unmarshal(data, &cfg) == nil {
 		s.syncAddr = cfg.SyncAddr
 		s.syncToken = cfg.SyncToken
 		s.autoSync = cfg.AutoSync
+		s.lastSyncTime = cfg.LastSyncTime
 	}
 }
 
 func (s *SyncService) saveConfig() error {
 	configPath := getConfigPath("sync_config.json")
 	data, _ := json.MarshalIndent(map[string]interface{}{
-		"syncAddr":  s.syncAddr,
-		"syncToken": s.syncToken,
-		"autoSync":  s.autoSync,
+		"syncAddr":     s.syncAddr,
+		"syncToken":    s.syncToken,
+		"autoSync":     s.autoSync,
+		"lastSyncTime": s.lastSyncTime,
 	}, "", "  ")
 	return os.WriteFile(configPath, data, 0644)
 }
@@ -1532,7 +1981,13 @@ func (s *SyncService) PushToServer() (string, error) {
 }
 
 // PullFromServer pulls entries from the remote sync server and merges into local history.
+// Uses incremental sync: only pulls entries updated since the last successful sync.
+// Falls back to full pull if never synced before.
 func (s *SyncService) PullFromServer() (string, error) {
+	return s.pullFromServerInternal(false)
+}
+
+func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 	if s.syncAddr == "" || s.syncToken == "" {
 		return "", fmt.Errorf("请先配置同步服务器地址和Token")
 	}
@@ -1540,7 +1995,16 @@ func (s *SyncService) PullFromServer() (string, error) {
 		return "", fmt.Errorf("历史服务未初始化")
 	}
 
+	// Build URL with ?since= for incremental sync
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/sync/pull"
+	since := s.lastSyncTime
+	if since > 0 {
+		url += fmt.Sprintf("?since=%d", since)
+		log.Printf("SyncService: incremental pull since %d", since)
+	} else {
+		log.Printf("SyncService: full pull (first sync)")
+	}
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %v", err)
@@ -1567,19 +2031,32 @@ func (s *SyncService) PullFromServer() (string, error) {
 	}
 
 	if len(result.Entries) == 0 {
+		// No new data, but still update lastSyncTime to avoid re-fetching
+		if result.ServerNow > 0 {
+			s.lastSyncTime = result.ServerNow
+			s.saveConfig()
+		}
 		return "服务器上没有新数据", nil
 	}
 
-	// Merge into local history
+	// Merge into local history (using AddHistoryFromSync to avoid push-back loop)
 	merged := 0
 	for _, e := range result.Entries {
 		if e.Deleted {
 			s.history.DeleteHistory(e.ID)
 			continue
 		}
-		s.history.AddHistory(e.Word, e.Result)
+		s.history.AddHistoryFromSync(e.Word, e.Result)
 		merged++
 	}
+
+	// Save lastSyncTime from server response for incremental sync
+	if result.ServerNow > 0 {
+		s.lastSyncTime = result.ServerNow
+		s.saveConfig()
+	}
+
+	log.Printf("SyncService: pulled %d entries (since=%d, serverNow=%d)", merged, since, result.ServerNow)
 
 	return fmt.Sprintf("成功拉取并合并 %d 条记录", merged), nil
 }
@@ -1637,59 +2114,6 @@ func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 	}
 
 	log.Printf("SyncService: auto-pushed '%s' to server", entry.Word)
-}
-
-// pullFromServerSilent pulls entries from server without returning user-facing messages.
-// Used for auto-sync on startup.
-func (s *SyncService) pullFromServerSilent() (string, error) {
-	if s.syncAddr == "" || s.syncToken == "" {
-		return "", fmt.Errorf("未配置")
-	}
-	if s.history == nil {
-		return "", fmt.Errorf("历史服务未初始化")
-	}
-
-	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/sync/pull"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+s.syncToken)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("Token无效")
-	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	var result syncserver.SyncPullResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-
-	if len(result.Entries) == 0 {
-		return "", nil
-	}
-
-	merged := 0
-	for _, e := range result.Entries {
-		if e.Deleted {
-			s.history.DeleteHistory(e.ID)
-			continue
-		}
-		s.history.AddHistory(e.Word, e.Result)
-		merged++
-	}
-
-	return fmt.Sprintf("拉取 %d 条记录", merged), nil
 }
 
 // ============================================================

@@ -11,16 +11,55 @@
     "postcss": true,
     "minified": true,
     "newFeature": true,
-    "babelSetting": { "ignoreList": [] }
+    "babelSetting": {
+      "ignoreList": [],
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    },
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "swc": false,
+    "disableSWC": true
   },
   "packOptions": {
     "ignore": [
-      { "type": "folder", "value": "node_modules" },
-      { "type": "folder", "value": "__tests__" },
-      { "type": "folder", "value": "ci" },
-      { "type": "file", "value": "jest.config.js" },
-      { "type": "file", "value": "package.json" },
-      { "type": "file", "value": "package-lock.json" }
-    ]
-  }
+      {
+        "value": "node_modules",
+        "type": "folder"
+      },
+      {
+        "value": "__tests__",
+        "type": "folder"
+      },
+      {
+        "value": "ci",
+        "type": "folder"
+      },
+      {
+        "value": "jest.config.js",
+        "type": "file"
+      },
+      {
+        "value": "package.json",
+        "type": "file"
+      },
+      {
+        "value": "package-lock.json",
+        "type": "file"
+      }
+    ],
+    "include": []
+  },
+  "simulatorPluginLibVersion": {},
+  "editorSetting": {}
 }

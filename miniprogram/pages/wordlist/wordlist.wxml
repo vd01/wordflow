@@ -1,0 +1,33 @@
+<view class="container">
+  <!-- Header -->
+  <view class="header">
+    <view class="header-stats">
+      <text class="stat-badge badge-new">New {{counts.new}}</text>
+      <text class="stat-badge badge-learning">LRN {{counts.learning}}</text>
+      <text class="stat-badge badge-review">REV {{counts.review}}</text>
+    </view>
+    <view class="btn btn-review" bindtap="goReview" wx:if="{{counts.total > 0}}">
+      Start Review ({{counts.total}})
+    </view>
+  </view>
+
+  <!-- Search -->
+  <view class="search-bar">
+    <input class="search-input" placeholder="Search words…" value="{{search}}" bindinput="onSearch" />
+  </view>
+
+  <!-- Word list -->
+  <view class="word-list">
+    <view class="word-item" wx:for="{{filtered}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
+      <view class="word-main">
+        <text class="word-text">{{item.word}}</text>
+        <text class="word-state state-{{item.state}}">{{item.stateLabel}}</text>
+      </view>
+    </view>
+
+    <view class="empty-hint" wx:if="{{filtered.length === 0}}">
+      <text wx:if="{{words.length === 0}}">No words yet. Pull from server first.</text>
+      <text wx:else>No matches for "{{search}}"</text>
+    </view>
+  </view>
+</view>

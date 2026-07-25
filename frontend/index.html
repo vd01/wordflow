@@ -24,6 +24,7 @@
     <div class="search-section">
         <div class="search-bar">
             <input type="text" id="search-input" placeholder="输入英语单词或短语..." autocomplete="off" spellcheck="false"/>
+            <button id="btn-clear-search" class="clear-btn hidden" title="清空">✕</button>
             <button id="btn-search" class="search-btn" title="查询">🔍</button>
         </div>
         <div class="shortcut-hint">全局快捷键: <kbd id="shortcut-display">Ctrl+Alt+Q</kbd> ｜ <kbd>Esc</kbd> 隐藏窗口</div>
@@ -58,83 +59,123 @@
 
     <!-- Settings Panel -->
     <div id="settings-panel" class="panel hidden">
-        <div class="panel-header">
-            <h2>⚙️ 设置</h2>
-            <button id="btn-close-settings" class="icon-btn">✕</button>
+        <div class="settings-tabs">
+            <button id="btn-close-settings" class="settings-back-btn" title="Back">←</button>
+            <button class="settings-tab active" data-tab="llm">🤖 LLM</button>
+            <button class="settings-tab" data-tab="dict">📖 Dictionary</button>
+            <button class="settings-tab" data-tab="sync">🔄 Sync</button>
+            <button class="settings-tab" data-tab="shortcut">⌨️ Shortcuts</button>
+            <button class="settings-tab" data-tab="other">📦 Other</button>
+            <button class="settings-tab" data-tab="debug">🔧 Debug</button>
         </div>
-        <div class="settings-form">
-            <div class="form-group">
-                <label for="api-key">API Key</label>
-                <div class="input-with-toggle">
-                    <input type="password" id="api-key" placeholder="输入你的 OpenAI API Key"/>
-                    <button id="btn-toggle-key" class="toggle-visibility" type="button" title="显示/隐藏">👁️</button>
+        <div class="settings-content">
+            <!-- LLM Tab -->
+            <div id="settings-tab-llm" class="settings-tab-page active">
+                <div class="form-group">
+                    <label for="api-key">API Key</label>
+                    <div class="input-with-toggle">
+                        <input type="password" id="api-key" placeholder="Enter your OpenAI API Key"/>
+                        <button id="btn-toggle-key" class="toggle-visibility" type="button" title="Show/Hide">👁️</button>
+                    </div>
+                    <small class="form-hint">Supports OpenAI-compatible APIs (DeepSeek, Qwen, etc.)</small>
                 </div>
-                <small class="form-hint">支持 OpenAI 兼容的 API（如 DeepSeek、通义千问等）</small>
-            </div>
-            <div class="form-group">
-                <label for="api-url">API URL</label>
-                <input type="text" id="api-url" placeholder="https://api.openai.com/v1"/>
-                <small class="form-hint">Base URL，自动拼接 /chat/completions。如: https://maas-coding-api.cn-huabei-1.xf-yun.com/v2</small>
-            </div>
-            <div class="form-group">
-                <label for="model-name">模型名称</label>
-                <input type="text" id="model-name" placeholder="gpt-4o-mini"/>
-                <small class="form-hint">推荐 gpt-4o-mini，性价比高</small>
-            </div>
-            <div class="form-group">
-                <button id="btn-prompt-settings" class="prompt-entry-btn" type="button">📝 大模型提示词与返回字段设置</button>
-                <small class="form-hint">自定义 AI 角色设定、返回内容字段及额外要求；查询界面会自动适配新增字段</small>
-            </div>
-            <div class="form-group">
-                <label for="shortcut-key">呼出快捷键</label>
-                <div class="shortcut-input-wrapper">
-                    <input type="text" id="shortcut-key" placeholder="点击此处录制快捷键..." readonly/>
-                    <button id="btn-record-shortcut" class="record-btn" type="button">录制</button>
+                <div class="form-group">
+                    <label for="api-url">API URL</label>
+                    <input type="text" id="api-url" placeholder="https://api.openai.com/v1"/>
+                    <small class="form-hint">Base URL, auto-appends /chat/completions. E.g. https://maas-coding-api.cn-huabei-1.xf-yun.com/v2</small>
                 </div>
-                <small class="form-hint">按下组合键自动录入，修改后需保存。默认 Ctrl+Alt+Q</small>
-            </div>
-            <div class="form-group ecdict-group">
-                <label>离线词典 (ECDICT)</label>
-                <div class="ecdict-row">
-                    <span id="ecdict-status" class="ecdict-status unavailable">❌ 未导入</span>
-                    <button id="btn-import-ecdict" class="import-btn" type="button">导入 ECDICT 词典</button>
+                <div class="form-group">
+                    <label for="model-name">Model Name</label>
+                    <input type="text" id="model-name" placeholder="gpt-4o-mini"/>
+                    <small class="form-hint">Recommended: gpt-4o-mini (great value)</small>
                 </div>
-                <small class="form-hint">导入后查词秒出结果，无需等待LLM。将 ecdict.csv 或 ecdict.csv.gz 放到程序目录的 ECDICT/ 文件夹下</small>
+                <div class="form-group">
+                    <button id="btn-prompt-settings" class="prompt-entry-btn" type="button">📝 LLM Prompt & Field Settings</button>
+                    <small class="form-hint">Customize AI role, output fields, and extra requirements; the query UI adapts automatically</small>
+                </div>
+                <button id="btn-save-config" class="primary-btn">💾 Save LLM Settings</button>
             </div>
-            <button id="btn-save-config" class="primary-btn">💾 保存设置</button>
 
-            <!-- Sync Section -->
-            <div class="settings-divider"></div>
-            <h3 class="settings-section-title">🔄 多设备同步</h3>
-            <div class="form-group">
-                <label for="sync-server-addr">同步服务器地址</label>
-                <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
-                <small class="form-hint">部署在云端的 WordWise 同步服务器地址，本地调试可填 http://127.0.0.1:9274</small>
-            </div>
-            <div class="form-group">
-                <label for="sync-user-token">用户 Token</label>
-                <div class="input-with-toggle">
-                    <input type="password" id="sync-user-token" placeholder="输入你的同步Token"/>
-                    <button id="btn-toggle-sync-token" class="toggle-visibility" type="button" title="显示/隐藏">👁️</button>
+            <!-- Dictionary Tab -->
+            <div id="settings-tab-dict" class="settings-tab-page">
+                <div class="form-group ecdict-group">
+                    <label>Offline Dictionary (ECDICT)</label>
+                    <div class="ecdict-row">
+                        <span id="ecdict-status" class="ecdict-status unavailable">❌ Not Imported</span>
+                        <button id="btn-import-ecdict" class="import-btn" type="button">Import ECDICT</button>
+                    </div>
+                    <small class="form-hint">After import, word lookups return instantly without waiting for LLM. Place ecdict.csv or ecdict.csv.gz in the ECDICT/ folder next to the executable</small>
                 </div>
-                <small class="form-hint">Token 由服务器分配，相当于你的账号密码，请妥善保管</small>
             </div>
-            <div class="form-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="sync-auto-sync" checked/>
-                    <span>启用自动同步</span>
-                </label>
-                <small class="form-hint">开启后，每次查词自动推送到服务器；启动时自动拉取最新数据</small>
+
+            <!-- Sync Tab -->
+            <div id="settings-tab-sync" class="settings-tab-page">
+                <div class="form-group">
+                    <label for="sync-server-addr">Sync Server Address</label>
+                    <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
+                    <small class="form-hint">Your cloud-deployed WordWise sync server. For local testing: http://127.0.0.1:9274</small>
+                </div>
+                <div class="form-group">
+                    <label for="sync-user-token">User Token</label>
+                    <div class="input-with-toggle">
+                        <input type="password" id="sync-user-token" placeholder="Enter your sync token"/>
+                        <button id="btn-toggle-sync-token" class="toggle-visibility" type="button" title="Show/Hide">👁️</button>
+                    </div>
+                    <small class="form-hint">Token assigned by the server — treat it like your password</small>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="sync-auto-sync" checked/>
+                        <span>Enable Auto Sync</span>
+                    </label>
+                    <small class="form-hint">When enabled, every lookup auto-pushes to server; on startup, latest data is auto-pulled</small>
+                </div>
+                <div class="sync-actions">
+                    <button id="btn-sync-test" class="secondary-btn" type="button">🔗 Test Connection</button>
+                    <button id="btn-sync-create-user" class="secondary-btn" type="button">🆕 Get Token</button>
+                </div>
+                <div class="sync-actions">
+                    <button id="btn-sync-push" class="secondary-btn" type="button">⬆️ Push to Server</button>
+                    <button id="btn-sync-pull" class="secondary-btn" type="button">⬇️ Pull from Server</button>
+                </div>
+                <button id="btn-save-sync-config" class="primary-btn">💾 Save Sync Settings</button>
             </div>
-            <div class="sync-actions">
-                <button id="btn-sync-test" class="secondary-btn" type="button">🔗 测试连接</button>
-                <button id="btn-sync-create-user" class="secondary-btn" type="button">🆕 获取Token</button>
+
+            <!-- Shortcuts Tab -->
+            <div id="settings-tab-shortcut" class="settings-tab-page">
+                <div class="form-group">
+                    <label for="shortcut-key">Global Hotkey</label>
+                    <div class="shortcut-input-wrapper">
+                        <input type="text" id="shortcut-key" placeholder="Click here to record hotkey..." readonly/>
+                        <button id="btn-record-shortcut" class="record-btn" type="button">Record</button>
+                    </div>
+                    <small class="form-hint">Press a key combo to auto-record. Save after modifying. Default: Ctrl+Alt+Q</small>
+                </div>
+                <button id="btn-save-config-shortcut" class="primary-btn">💾 Save Shortcut</button>
             </div>
-            <div class="sync-actions">
-                <button id="btn-sync-push" class="secondary-btn" type="button">⬆️ 推送到服务器</button>
-                <button id="btn-sync-pull" class="secondary-btn" type="button">⬇️ 从服务器拉取</button>
+
+            <!-- Other Tab -->
+            <div id="settings-tab-other" class="settings-tab-page">
+                <div class="settings-other-placeholder">
+                    <span class="settings-other-icon">🚧</span>
+                    <p>More settings coming soon...</p>
+                </div>
             </div>
-            <button id="btn-save-sync-config" class="primary-btn">💾 保存同步设置</button>
+            <div id="settings-tab-debug" class="settings-tab-page">
+                <div class="form-group">
+                    <label>📊 Cache & LLM Stats</label>
+                    <button id="btn-debug-refresh" class="secondary-btn" type="button" style="width:100%;margin-bottom:8px;">🔄 Refresh Stats</button>
+                    <pre id="debug-cache-stats" class="prompt-preview-pre" style="font-size:12px;max-height:200px;">Loading...</pre>
+                </div>
+                <div class="form-group">
+                    <label>🔍 Prompt Structure (for cache analysis)</label>
+                    <div class="prompt-test-row">
+                        <input type="text" id="debug-prompt-word" placeholder="Enter a word to inspect prompt..." value="example"/>
+                        <button id="btn-debug-prompt" class="secondary-btn" type="button">Inspect</button>
+                    </div>
+                    <pre id="debug-prompt-info" class="prompt-preview-pre" style="font-size:12px;max-height:400px;">Click Inspect to see prompt structure...</pre>
+                </div>
+            </div>
         </div>
     </div>
 

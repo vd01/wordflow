@@ -1,0 +1,84 @@
+<view class="container">
+  <!-- Header -->
+  <view class="header">
+    <view class="word-header">
+      <view class="word-title-row">
+        <text class="word-title">{{entry.word}}</text>
+        <text class="word-state-badge state-{{card ? card.state : 'new'}}">{{stateLabel}}</text>
+      </view>
+      <view class="word-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+      <view class="word-meta" wx:if="{{nextDue}}">
+        <text class="meta-item">📅 {{nextDue}}</text>
+        <text class="meta-item" wx:if="{{interval}}">Interval: {{interval}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- Content -->
+  <view class="detail-content">
+    <!-- ECDICT badges -->
+    <view class="card-badges" wx:if="{{parsedResult.tag || parsedResult.collins || parsedResult.oxford}}">
+      <text class="badge badge-exam" wx:if="{{parsedResult.tag}}">{{parsedResult.tag}}</text>
+      <text class="badge badge-collins" wx:if="{{parsedResult.collins}}">★{{parsedResult.collins}}</text>
+      <text class="badge badge-oxford" wx:if="{{parsedResult.oxford}}">Oxford</text>
+    </view>
+
+    <!-- Chinese Translation -->
+    <view class="card-section" wx:if="{{parsedResult.translation}}">
+      <view class="section-label">释义</view>
+      <view class="section-text translation-text">{{parsedResult.translation}}</view>
+    </view>
+
+    <!-- English Definition -->
+    <view class="card-section" wx:if="{{parsedResult.definition}}">
+      <view class="section-label">Definition</view>
+      <view class="section-text">{{parsedResult.definition}}</view>
+    </view>
+
+    <!-- LLM Definitions -->
+    <view class="card-section" wx:if="{{parsedResult.definitions && parsedResult.definitions.length > 0}}">
+      <view class="section-label">详细释义</view>
+      <view class="def-item" wx:for="{{parsedResult.definitions}}" wx:key="index">
+        <text class="def-pos" wx:if="{{item.pos}}">{{item.pos}} </text>
+        <text class="def-meaning" wx:if="{{item.meaning}}">{{item.meaning}}</text>
+        <view class="def-example" wx:if="{{item.english_example}}">📝 {{item.english_example}}</view>
+        <view class="def-example-cn" wx:if="{{item.chinese_example}}">💡 {{item.chinese_example}}</view>
+      </view>
+    </view>
+
+    <!-- Memory tips -->
+    <view class="card-section" wx:if="{{parsedResult.memory_tips}}">
+      <view class="section-label">🧠 记忆技巧</view>
+      <view class="section-text">{{parsedResult.memory_tips}}</view>
+    </view>
+
+    <!-- Synonyms -->
+    <view class="card-section" wx:if="{{parsedResult.synonyms}}">
+      <view class="section-label">📌 近义词</view>
+      <view class="section-text">{{parsedResult.synonyms}}</view>
+    </view>
+
+    <!-- Antonyms -->
+    <view class="card-section" wx:if="{{parsedResult.antonyms}}">
+      <view class="section-label">🚫 反义词</view>
+      <view class="section-text">{{parsedResult.antonyms}}</view>
+    </view>
+
+    <!-- Etymology -->
+    <view class="card-section" wx:if="{{parsedResult.etymology}}">
+      <view class="section-label">📚 词源</view>
+      <view class="section-text">{{parsedResult.etymology}}</view>
+    </view>
+
+    <!-- Inflected forms -->
+    <view class="card-section" wx:if="{{parsedResult.exchange}}">
+      <view class="section-label">🔄 词形变化</view>
+      <view class="section-text">{{parsedResult.exchange}}</view>
+    </view>
+
+    <!-- Fallback -->
+    <view class="card-section" wx:if="{{!hasContent && parsedResult.raw}}">
+      <view class="section-text">{{parsedResult.raw}}</view>
+    </view>
+  </view>
+</view>

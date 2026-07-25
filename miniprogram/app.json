@@ -1,5 +1,5 @@
 {
-  "pages": ["pages/index/index"],
+  "pages": ["pages/index/index", "pages/wordlist/wordlist", "pages/review/review", "pages/worddetail/worddetail"],
   "window": {
     "backgroundTextStyle": "light",
     "navigationBarBackgroundColor": "#2c3e50",

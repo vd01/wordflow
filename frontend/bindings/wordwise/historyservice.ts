@@ -21,10 +21,19 @@ import * as sql$0 from "../database/sql/models.js";
 import * as $models from "./models.js";
 
 /**
- * AddHistory adds a new entry or updates an existing one (same word)
+ * AddHistory adds a new entry or updates an existing one (same word).
+ * If skipSync is true, the sync callback is NOT triggered (used when importing from server).
  */
 export function AddHistory(word: string, result: string): $CancellablePromise<void> {
     return $Call.ByID(3292216004, word, result);
+}
+
+/**
+ * AddHistoryFromSync adds/updates an entry from a server pull, without triggering
+ * the sync callback (to avoid pushing it right back to the server).
+ */
+export function AddHistoryFromSync(word: string, result: string): $CancellablePromise<void> {
+    return $Call.ByID(3813569295, word, result);
 }
 
 /**
@@ -60,6 +69,14 @@ export function GetDB(): $CancellablePromise<sql$0.DB | null> {
  */
 export function GetHistory(): $CancellablePromise<$models.HistoryEntry[] | null> {
     return $Call.ByID(3254780633);
+}
+
+/**
+ * GetHistoryByWord returns a single entry by word (case-insensitive).
+ * Used for cache lookup to avoid redundant LLM calls.
+ */
+export function GetHistoryByWord(word: string): $CancellablePromise<$models.HistoryEntry | null> {
+    return $Call.ByID(3200924104, word);
 }
 
 /**

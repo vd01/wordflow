@@ -5,3 +5,15 @@
   padding: 18rpx;
   margin-top: 8rpx;
 }
+.offline-banner {
+  background: #e74c3c;
+  color: #fff;
+  text-align: center;
+  padding: 12rpx 0;
+  font-size: 24rpx;
+  border-radius: 8rpx;
+  margin-bottom: 16rpx;
+}
+.btn-accent {
+  background: #27ae60;
+}

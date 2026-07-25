@@ -33,6 +33,8 @@ export function OnEntryAdded(entry: $models.HistoryEntry): $CancellablePromise<v
 
 /**
  * PullFromServer pulls entries from the remote sync server and merges into local history.
+ * Uses incremental sync: only pulls entries updated since the last successful sync.
+ * Falls back to full pull if never synced before.
  */
 export function PullFromServer(): $CancellablePromise<string> {
     return $Call.ByID(1176688374);

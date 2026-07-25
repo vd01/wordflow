@@ -6,6 +6,22 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 /**
+ * CacheResult stores a merged lookup result in the in-memory cache.
+ * Call this after a successful full lookup so subsequent lookups of the same
+ * word are served from cache instantly.
+ */
+export function CacheResult(word: string, result: string): $CancellablePromise<void> {
+    return $Call.ByID(4117976504, word, result);
+}
+
+/**
+ * GetCacheStats returns cache statistics for debugging.
+ */
+export function GetCacheStats(): $CancellablePromise<{ [_ in string]?: any } | null> {
+    return $Call.ByID(3663779730);
+}
+
+/**
  * GetConfig returns current configuration
  */
 export function GetConfig(): $CancellablePromise<{ [_ in string]?: string } | null> {
@@ -17,6 +33,15 @@ export function GetConfig(): $CancellablePromise<{ [_ in string]?: string } | nu
  */
 export function GetPromptConfig(): $CancellablePromise<string> {
     return $Call.ByID(3674654971);
+}
+
+/**
+ * GetPromptDebugInfo returns the exact system and user prompts that would be sent
+ * for a given word, without actually calling the LLM. Useful for debugging
+ * prompt cache behavior and prompt structure.
+ */
+export function GetPromptDebugInfo(word: string): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(937010968, word);
 }
 
 /**
@@ -35,6 +60,16 @@ export function LookupWord(word: string): $CancellablePromise<string> {
 }
 
 /**
+ * LookupWordCached checks the in-memory cache and history DB for a previously
+ * looked-up word. Returns the full merged JSON result (ECDICT+LLM) if found,
+ * or empty string if not cached. This avoids redundant LLM calls for words
+ * the user has already looked up.
+ */
+export function LookupWordCached(word: string): $CancellablePromise<string> {
+    return $Call.ByID(719803657, word);
+}
+
+/**
  * LookupWordFast returns ECDICT result immediately (offline, ~10ms).
  * Returns JSON string of the ECDICT entry, or empty string if not found.
  */
@@ -48,6 +83,14 @@ export function LookupWordFast(word: string): $CancellablePromise<string> {
  */
 export function LookupWordLLM(word: string): $CancellablePromise<string> {
     return $Call.ByID(1393846922, word);
+}
+
+/**
+ * LookupWordLLMFast calls LLM without re-querying ECDICT for the prompt context.
+ * Use this when the frontend already has the ECDICT data from LookupWordFast.
+ */
+export function LookupWordLLMFast(word: string): $CancellablePromise<string> {
+    return $Call.ByID(2620384208, word);
 }
 
 /**

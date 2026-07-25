@@ -1,0 +1,109 @@
+.container { padding: 0; min-height: 100vh; background: #f5f6f8; }
+
+.header {
+  background: #2c3e50;
+  color: #fff;
+  padding: 28rpx 24rpx 20rpx;
+}
+.word-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.word-title {
+  font-size: 48rpx;
+  font-weight: bold;
+}
+.word-state-badge {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+}
+.state-new { background: rgba(52,152,219,0.3); color: #3498db; }
+.state-1 { background: rgba(230,126,34,0.3); color: #e67e22; }
+.state-2 { background: rgba(46,204,113,0.3); color: #2ecc71; }
+.state-3 { background: rgba(231,76,60,0.3); color: #e74c3c; }
+.word-phonetic {
+  font-size: 28rpx;
+  color: #bdc3c7;
+  margin-top: 4rpx;
+}
+.word-meta {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #95a5a6;
+}
+
+.detail-content {
+  padding: 24rpx;
+}
+
+/* Badges */
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-bottom: 16rpx;
+}
+.badge {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+}
+.badge-exam { background: #fef5e7; color: #e67e22; }
+.badge-collins { background: #fef9e7; color: #f39c12; }
+.badge-oxford { background: #ebf5fb; color: #2980b9; }
+
+.card-section {
+  background: #fff;
+  border-radius: 12rpx;
+  padding: 20rpx 24rpx;
+  margin-top: 16rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.04);
+}
+.section-label {
+  font-size: 22rpx;
+  color: #95a5a6;
+  letter-spacing: 1rpx;
+  margin-bottom: 8rpx;
+}
+.section-text {
+  font-size: 28rpx;
+  color: #2c3e50;
+  line-height: 1.6;
+}
+.translation-text {
+  white-space: pre-line;
+}
+
+/* LLM Definitions */
+.def-item {
+  margin: 8rpx 0;
+  padding: 8rpx 0;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+.def-item:last-child { border-bottom: none; }
+.def-pos {
+  font-size: 24rpx;
+  color: #3498db;
+  font-weight: bold;
+  margin-right: 8rpx;
+}
+.def-meaning {
+  font-size: 28rpx;
+  color: #2c3e50;
+}
+.def-example {
+  font-size: 24rpx;
+  color: #7f8c8d;
+  margin-top: 4rpx;
+  padding-left: 16rpx;
+}
+.def-example-cn {
+  font-size: 24rpx;
+  color: #7f8c8d;
+  margin-top: 2rpx;
+  padding-left: 16rpx;
+}

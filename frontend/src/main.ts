@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLM, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt } from "../bindings/wordwise/dictservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo } from "../bindings/wordwise/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordwise/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordwise/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, CreateUser, PushToServer, PullFromServer } from "../bindings/wordwise/syncservice.js";
@@ -69,7 +69,7 @@ function buildPromptPreview(cfg: PromptConfig, word: string): string {
     const lines: string[] = [];
     for (const f of cfg.fields) {
         if (!f.enabled) continue;
-        if (f.key === "word") lines.push(`  "word": "${word}"`);
+        if (f.key === "word") lines.push(`  "word": "..."`); // placeholder — actual word in variable suffix
         else if (f.key === "definitions") lines.push(DEFINITIONS_SCHEMA_BLOCK);
         else lines.push(`  "${f.key}": "${f.desc}"`);
     }
@@ -78,7 +78,9 @@ function buildPromptPreview(cfg: PromptConfig, word: string): string {
     if (fieldEnabled(cfg, "definitions")) closing += "如果有多个词性，请在definitions中分别列出。";
     let extra = "";
     if (cfg.extraRequirements.trim()) extra = "\n\n额外要求：" + cfg.extraRequirements;
-    return `请对英语单词或短语「${word}」进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n${schema}${closing}${extra}\n\n（实际查询时还会附带 ECDICT 已知信息以避免重复）`;
+    const staticPrefix = `请对英语单词或短语进行详细解释，严格按照以下JSON格式返回（不要包含markdown代码块标记）：\n\n${schema}${closing}${extra}`;
+    const variableSuffix = `\n\n---\n查询单词：${word}\n\n（实际查询时还会附带 ECDICT 已知信息以避免重复）`;
+    return `[STATIC PREFIX — cacheable by LLM provider]\n${staticPrefix}\n\n[VARIABLE SUFFIX — changes per word]\n${variableSuffix}`;
 }
 
 // Load prompt configuration at startup
@@ -96,6 +98,7 @@ GetPromptConfig().then(json => {
 // DOM Elements
 // ============================================================
 const searchInput = document.getElementById("search-input") as HTMLInputElement;
+const btnClearSearch = document.getElementById("btn-clear-search") as HTMLButtonElement;
 const btnSearch = document.getElementById("btn-search") as HTMLButtonElement;
 const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
 const btnSettings = document.getElementById("btn-settings") as HTMLButtonElement;
@@ -197,7 +200,13 @@ async function doSearch(word: string) {
         showToast("请输入要查询的单词");
         return;
     }
-    if (isSearching) return;
+    if (isSearching) {
+        // If searching a different word, mark current as stale so the in-flight search aborts
+        if (currentWord !== word) {
+            currentWord = word; // This will cause the in-flight search to detect stale and abort
+        }
+        return;
+    }
 
     isSearching = true;
     currentWord = word;
@@ -212,9 +221,35 @@ async function doSearch(word: string) {
     let llmData: any = null;
 
     try {
+        // ── Phase 0: Check cache (instant) ──
+        const cacheStartTime = performance.now();
+        const cachedResult = await LookupWordCached(word);
+        const cacheDuration = performance.now() - cacheStartTime;
+        if (currentWord !== word) { isSearching = false; return; } // Stale query
+
+        if (cachedResult) {
+            console.log(`[LLM-DEBUG] Cache HIT in ${cacheDuration.toFixed(0)}ms, skipping ECDICT+LLM`);
+            try {
+                mergedData = JSON.parse(cachedResult);
+            } catch {
+                mergedData = { word, _rawCache: cachedResult };
+            }
+            loadingEl.classList.add("hidden");
+            resultEl.innerHTML = renderWordResult(mergedData, false);
+            resultEl.classList.remove("hidden");
+            resultEl.scrollTop = 0;
+            isSearching = false;
+            return;
+        }
+
+        console.log(`[LLM-DEBUG] Cache MISS in ${cacheDuration.toFixed(0)}ms, proceeding to ECDICT+LLM`);
         // ── Phase 1: ECDICT fast lookup (~10ms) ──
+        const ecdictStartTime = performance.now();
+        console.log(`[LLM-DEBUG] === Phase 1: Starting ECDICT lookup for "${word}" ===`);
         const ecdictResult = await LookupWordFast(word);
-        if (currentWord !== word) return; // Stale query
+        const ecdictDuration = performance.now() - ecdictStartTime;
+        console.log(`[LLM-DEBUG] ECDICT lookup completed in ${ecdictDuration.toFixed(0)}ms, result: ${ecdictResult ? 'found' : 'not found'}`);
+        if (currentWord !== word) { isSearching = false; return; } // Stale query
 
         if (ecdictResult) {
             try {
@@ -232,9 +267,19 @@ async function doSearch(word: string) {
         }
 
         // ── Phase 2: LLM enrichment (slow, ~2-10s) ──
+        const llmStartTime = performance.now();
+        console.log(`[LLM-DEBUG] === Phase 2: Starting LLM lookup for "${word}" ===`);
         try {
-            const llmResult = await LookupWordLLM(word);
-            if (currentWord !== word) return; // Stale query
+            const llmResult = await LookupWordLLMFast(word);
+            const llmDuration = performance.now() - llmStartTime;
+            console.log(`[LLM-DEBUG] LLM call completed in ${llmDuration.toFixed(0)}ms`);
+            console.log(`[LLM-DEBUG] LLM result type: ${typeof llmResult}, length: ${llmResult?.length ?? 0}`);
+            if (llmResult) {
+                console.log(`[LLM-DEBUG] LLM result preview: ${llmResult.substring(0, 200)}`);
+            } else {
+                console.log(`[LLM-DEBUG] LLM returned empty/null result`);
+            }
+            if (currentWord !== word) { isSearching = false; return; } // Stale query
 
             if (llmResult) {
                 let parsed: any = null;
@@ -243,11 +288,14 @@ async function doSearch(word: string) {
                 // Robust JSON parsing
                 try {
                     parsed = JSON.parse(rawResult);
-                } catch {
+                    console.log(`[LLM-DEBUG] JSON parsed successfully on first try`);
+                } catch (parseErr) {
+                    console.warn(`[LLM-DEBUG] JSON parse failed on first try: ${parseErr}, attempting recovery...`);
                     const jsonMatch = rawResult.match(/\{[\s\S]*\}/);
                     if (jsonMatch) {
                         try {
                             parsed = JSON.parse(jsonMatch[0]);
+                            console.log(`[LLM-DEBUG] JSON parsed successfully after regex extraction`);
                         } catch {
                             let cleaned = jsonMatch[0].replace(/[\x00-\x1f\x7f]/g, (ch) => {
                                 if (ch === '\n' || ch === '\r' || ch === '\t') return ch;
@@ -255,7 +303,10 @@ async function doSearch(word: string) {
                             });
                             try {
                                 parsed = JSON.parse(cleaned);
-                            } catch {
+                                console.log(`[LLM-DEBUG] JSON parsed successfully after control char cleaning`);
+                            } catch (finalErr) {
+                                console.error(`[LLM-DEBUG] JSON parse failed completely: ${finalErr}`);
+                                console.error(`[LLM-DEBUG] Raw result that failed to parse (first 500 chars): ${rawResult.substring(0, 500)}`);
                                 // Give up on LLM parse, keep ECDICT result
                             }
                         }
@@ -271,6 +322,9 @@ async function doSearch(word: string) {
                 }
             }
         } catch (err: any) {
+            const llmDuration = performance.now() - llmStartTime;
+            console.error(`[LLM-DEBUG] LLM call FAILED after ${llmDuration.toFixed(0)}ms:`, err);
+            console.error(`[LLM-DEBUG] Error type: ${typeof err}, message: ${String(err)}`);
             // LLM failed - if we have ECDICT data, that's fine
             if (!ecdictData) {
                 loadingEl.classList.add("hidden");
@@ -304,8 +358,10 @@ async function doSearch(word: string) {
         resultEl.classList.remove("hidden");
         resultEl.scrollTop = 0;
 
-        // Save to history (merged result)
-        AddHistory(word, JSON.stringify(mergedData)).catch(console.error);
+        // Save to history (merged result) and in-memory cache
+        const mergedJson = JSON.stringify(mergedData);
+        AddHistory(word, mergedJson).catch(console.error);
+        CacheResult(word, mergedJson).catch(console.error);
 
     } catch (err: any) {
         loadingEl.classList.add("hidden");
@@ -779,6 +835,25 @@ btnSearch.addEventListener("click", () => {
     const word = searchInput.value;
     doSearch(word);
 });
+
+// Clear button: clear input, hide results, focus input
+btnClearSearch.addEventListener("click", () => {
+    searchInput.value = "";
+    btnClearSearch.classList.add("hidden");
+    resultEl.classList.add("hidden");
+    hideError();
+    searchInput.focus();
+});
+
+// Show/hide clear button based on input content
+searchInput.addEventListener("input", () => {
+    if (searchInput.value.length > 0) {
+        btnClearSearch.classList.remove("hidden");
+    } else {
+        btnClearSearch.classList.add("hidden");
+    }
+});
+
 searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
         const word = searchInput.value;
@@ -793,6 +868,25 @@ btnSettings.addEventListener("click", showSettings);
 btnCloseSettings.addEventListener("click", () => settingsPanel.classList.add("hidden"));
 
 btnSaveConfig.addEventListener("click", saveConfig);
+
+// Shortcut tab save button
+const btnSaveConfigShortcut = document.getElementById("btn-save-config-shortcut") as HTMLButtonElement;
+btnSaveConfigShortcut.addEventListener("click", saveConfig);
+
+// Settings tab switching
+const settingsTabs = document.querySelectorAll(".settings-tab");
+const settingsTabPages = document.querySelectorAll(".settings-tab-page");
+
+settingsTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+        const targetTab = (tab as HTMLElement).dataset.tab;
+        settingsTabs.forEach(t => t.classList.remove("active"));
+        settingsTabPages.forEach(p => p.classList.remove("active"));
+        tab.classList.add("active");
+        const page = document.getElementById(`settings-tab-${targetTab}`);
+        if (page) page.classList.add("active");
+    });
+});
 
 if (btnImportEcdict) {
     btnImportEcdict.addEventListener("click", importEcdict);
@@ -898,6 +992,14 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
             historyPanel.classList.add("hidden");
             return;
         }
+        // If search input has text, clear it first before hiding
+        if (searchInput.value.trim() !== "") {
+            searchInput.value = "";
+            btnClearSearch.classList.add("hidden");
+            resultEl.classList.add("hidden");
+            searchInput.focus();
+            return;
+        }
         Events.Emit("hide-window");
     }
 });
@@ -959,11 +1061,32 @@ modalBody.addEventListener("click", (e) => {
 });
 
 // Listen for clipboard-english-detected event from Go
+let clipboardDebounce: ReturnType<typeof setTimeout>;
+let lastUserTyping = 0; // timestamp of last user keystroke in search input
+
+searchInput.addEventListener("keydown", () => { lastUserTyping = Date.now(); });
+
 Events.On("clipboard-english-detected", (event: any) => {
     const word = event.data;
-    if (word) {
-        doSearch(word);
+    console.log(`[CLIPBOARD-DEBUG] Event received: word="${word}", isSearching=${isSearching}, currentWord="${currentWord}", lastUserTyping=${Date.now() - lastUserTyping}ms ago`);
+    if (!word) return;
+    // Skip if the user has typed in the search input in the last 2 seconds
+    // (they're actively entering a word manually — don't overwrite)
+    if (Date.now() - lastUserTyping < 2000) {
+        console.log(`[CLIPBOARD-DEBUG] SKIPPED: user typed recently`);
+        return;
     }
+    // Skip if we're already searching this exact word
+    if (currentWord === word && isSearching) {
+        console.log(`[CLIPBOARD-DEBUG] SKIPPED: already searching this word`);
+        return;
+    }
+    console.log(`[CLIPBOARD-DEBUG] Will search for "${word}" in 300ms`);
+    // Debounce: wait 300ms before acting on clipboard change
+    clearTimeout(clipboardDebounce);
+    clipboardDebounce = setTimeout(() => {
+        doSearch(word);
+    }, 300);
 });
 
 // Focus search input on load
@@ -1322,4 +1445,54 @@ btnPromptReset.addEventListener("click", () => {
     if (!confirm("确定恢复全部提示词设置为默认值吗？自定义字段将被移除。")) return;
     editorConfig = defaultPromptConfig();
     populateFromEditor();
+});
+
+// ============================================================
+// Debug Tab - Cache stats & Prompt structure inspection
+// ============================================================
+const btnDebugRefresh = document.getElementById("btn-debug-refresh") as HTMLButtonElement;
+const debugCacheStats = document.getElementById("debug-cache-stats") as HTMLPreElement;
+const btnDebugPrompt = document.getElementById("btn-debug-prompt") as HTMLButtonElement;
+const debugPromptWord = document.getElementById("debug-prompt-word") as HTMLInputElement;
+const debugPromptInfo = document.getElementById("debug-prompt-info") as HTMLPreElement;
+
+async function refreshCacheStats() {
+    try {
+        const stats = await GetCacheStats() as any;
+        debugCacheStats.textContent = JSON.stringify(stats, null, 2);
+    } catch (err: any) {
+        debugCacheStats.textContent = "Error: " + String(err);
+    }
+}
+
+async function inspectPrompt() {
+    const word = debugPromptWord.value.trim() || "example";
+    try {
+        const info = await GetPromptDebugInfo(word) as any;
+        // Format nicely
+        const formatted = Object.entries(info)
+            .map(([k, v]) => {
+                if (k.endsWith("Len") || k === "memoryCacheSize") {
+                    return `${k}: ${v}`;
+                }
+                return `--- ${k} ---\n${v}`;
+            })
+            .join("\n\n");
+        debugPromptInfo.textContent = formatted;
+    } catch (err: any) {
+        debugPromptInfo.textContent = "Error: " + String(err);
+    }
+}
+
+btnDebugRefresh.addEventListener("click", refreshCacheStats);
+btnDebugPrompt.addEventListener("click", inspectPrompt);
+
+// Auto-load stats when debug tab is shown
+const origSettingsTabs = document.querySelectorAll(".settings-tab");
+origSettingsTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+        if ((tab as HTMLElement).dataset.tab === "debug") {
+            refreshCacheStats();
+        }
+    });
 });

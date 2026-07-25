@@ -1,0 +1,159 @@
+<view class="container">
+  <!-- Session header -->
+  <view class="session-bar" wx:if="{{!emptyState}}">
+    <view class="session-left">
+      <view class="settings-btn" bindtap="goSettings">⚙️</view>
+    </view>
+    <view class="session-stats">
+      <text class="stat-item">Remaining: {{remaining}}</text>
+      <text class="stat-item">Reviewed: {{reviewed}}</text>
+    </view>
+  </view>
+
+  <!-- Empty state / Session complete -->
+  <view class="done-screen" wx:if="{{emptyState}}">
+    <view class="done-header">
+      <view class="done-icon">✅</view>
+      <view class="done-title">Session Complete</view>
+      <view class="done-sub">You reviewed {{reviewed}} cards</view>
+    </view>
+    <view class="done-card">
+      <view class="done-stats">
+        <view class="done-stat">
+          <view class="done-stat-num stat-again">{{sessionAgain}}</view>
+          <view class="done-stat-label">Again</view>
+        </view>
+        <view class="done-stat">
+          <view class="done-stat-num stat-hard">{{sessionHard}}</view>
+          <view class="done-stat-label">Hard</view>
+        </view>
+        <view class="done-stat">
+          <view class="done-stat-num stat-good">{{sessionGood}}</view>
+          <view class="done-stat-label">Good</view>
+        </view>
+        <view class="done-stat">
+          <view class="done-stat-num stat-easy">{{sessionEasy}}</view>
+          <view class="done-stat-label">Easy</view>
+        </view>
+      </view>
+      <view class="done-hint" wx:if="{{remainingDue > 0}}">{{remainingDue}} cards still due</view>
+      <view class="done-hint" wx:else>All caught up — see you next time!</view>
+    </view>
+    <view class="done-actions">
+      <view class="done-btn done-btn-primary" bindtap="restart" wx:if="{{remainingDue > 0}}">Continue Review</view>
+      <view class="done-btn done-btn-secondary" bindtap="goSettings">⚙️ Settings</view>
+    </view>
+  </view>
+
+  <!-- Error message -->
+  <view class="error-msg" wx:if="{{errorMsg}}">{{errorMsg}}</view>
+
+  <!-- Card area -->
+  <view class="card-area" wx:if="{{entry && !emptyState}}">
+    <!-- Card content (scrolls with page, has bottom padding to avoid overlap with fixed bar) -->
+    <view class="card-content {{revealed ? 'card-content--revealed' : ''}}" bindtap="reveal">
+      <view class="flashcard">
+        <view class="card-word">{{entry.word}}</view>
+        <view class="card-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+
+        <!-- Back: revealed on tap -->
+        <view class="card-back" wx:if="{{revealed}}">
+          <view class="divider"></view>
+
+          <!-- ECDICT badges -->
+          <view class="card-badges" wx:if="{{parsedResult.tag || parsedResult.collins || parsedResult.oxford}}">
+            <text class="badge badge-exam" wx:if="{{parsedResult.tag}}">{{parsedResult.tag}}</text>
+            <text class="badge badge-collins" wx:if="{{parsedResult.collins}}">★{{parsedResult.collins}}</text>
+            <text class="badge badge-oxford" wx:if="{{parsedResult.oxford}}">Oxford</text>
+          </view>
+
+          <!-- Chinese Translation (ECDICT) -->
+          <view class="card-section" wx:if="{{parsedResult.translation}}">
+            <view class="section-label">释义</view>
+            <view class="section-text translation-text">{{parsedResult.translation}}</view>
+          </view>
+
+          <!-- English Definition (ECDICT) -->
+          <view class="card-section" wx:if="{{parsedResult.definition}}">
+            <view class="section-label">Definition</view>
+            <view class="section-text">{{parsedResult.definition}}</view>
+          </view>
+
+          <!-- LLM Definitions (structured) -->
+          <view class="card-section" wx:if="{{parsedResult.definitions && parsedResult.definitions.length > 0}}">
+            <view class="section-label">详细释义</view>
+            <view class="def-item" wx:for="{{parsedResult.definitions}}" wx:key="index">
+              <text class="def-pos" wx:if="{{item.pos}}">{{item.pos}} </text>
+              <text class="def-meaning" wx:if="{{item.meaning}}">{{item.meaning}}</text>
+              <view class="def-example" wx:if="{{item.english_example}}">📝 {{item.english_example}}</view>
+              <view class="def-example-cn" wx:if="{{item.chinese_example}}">💡 {{item.chinese_example}}</view>
+            </view>
+          </view>
+
+          <!-- Memory tips -->
+          <view class="card-section" wx:if="{{parsedResult.memory_tips}}">
+            <view class="section-label">🧠 记忆技巧</view>
+            <view class="section-text">{{parsedResult.memory_tips}}</view>
+          </view>
+
+          <!-- Synonyms -->
+          <view class="card-section" wx:if="{{parsedResult.synonyms}}">
+            <view class="section-label">📌 近义词</view>
+            <view class="section-text">{{parsedResult.synonyms}}</view>
+          </view>
+
+          <!-- Antonyms -->
+          <view class="card-section" wx:if="{{parsedResult.antonyms}}">
+            <view class="section-label">🚫 反义词</view>
+            <view class="section-text">{{parsedResult.antonyms}}</view>
+          </view>
+
+          <!-- Etymology -->
+          <view class="card-section" wx:if="{{parsedResult.etymology}}">
+            <view class="section-label">📚 词源</view>
+            <view class="section-text">{{parsedResult.etymology}}</view>
+          </view>
+
+          <!-- Inflected forms -->
+          <view class="card-section" wx:if="{{parsedResult.exchange}}">
+            <view class="section-label">🔄 词形变化</view>
+            <view class="section-text">{{parsedResult.exchange}}</view>
+          </view>
+
+          <!-- Fallback: raw result if nothing matched above -->
+          <view class="card-section" wx:if="{{!hasContent && parsedResult.raw}}">
+            <view class="section-text">{{parsedResult.raw}}</view>
+          </view>
+        </view>
+
+        <!-- Tap hint (before reveal) -->
+        <view class="tap-hint" wx:if="{{!revealed}}">Tap to reveal answer</view>
+      </view>
+    </view>
+
+    <!-- Bottom bar: fixed at bottom -->
+    <view class="bottom-bar" wx:if="{{revealed}}">
+      <view class="undo-btn" wx:if="{{undoStack.length > 0}}" bindtap="undo">
+        ↩ Undo
+      </view>
+      <view class="rating-buttons">
+        <view class="rating-btn rating-again" bindtap="rate" data-rating="1">
+          <view class="rating-label">Again</view>
+          <view class="rating-interval">{{intervals.again}}</view>
+        </view>
+        <view class="rating-btn rating-hard" bindtap="rate" data-rating="2">
+          <view class="rating-label">Hard</view>
+          <view class="rating-interval">{{intervals.hard}}</view>
+        </view>
+        <view class="rating-btn rating-good" bindtap="rate" data-rating="3">
+          <view class="rating-label">Good</view>
+          <view class="rating-interval">{{intervals.good}}</view>
+        </view>
+        <view class="rating-btn rating-easy" bindtap="rate" data-rating="4">
+          <view class="rating-label">Easy</view>
+          <view class="rating-interval">{{intervals.easy}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
