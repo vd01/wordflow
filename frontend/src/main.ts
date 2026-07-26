@@ -2,7 +2,7 @@ import { Events } from "@wailsio/runtime";
 import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
-import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync } from "../bindings/wordflow/syncservice.js";
+import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode } from "../bindings/wordflow/syncservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -1245,8 +1245,17 @@ const qrStatusText = document.getElementById("qr-status-text") as HTMLDivElement
 const syncServerSection = document.getElementById("sync-server-section") as HTMLDivElement;
 const syncLinkedSection = document.getElementById("sync-linked-section") as HTMLDivElement;
 const syncLinkedQrImage = document.getElementById("sync-linked-qr-image") as HTMLImageElement;
+const syncLinkedStatus = document.getElementById("sync-linked-status") as HTMLDivElement;
+const syncLinkedHint = document.getElementById("sync-linked-hint") as HTMLDivElement;
 const syncQrSection = document.getElementById("sync-qr-section") as HTMLDivElement;
+const syncEmailSection = document.getElementById("sync-email-section") as HTMLDivElement;
 const btnSyncUnlink = document.getElementById("btn-sync-unlink") as HTMLButtonElement;
+const inputSyncEmail = document.getElementById("sync-email-input") as HTMLInputElement;
+const inputSyncEmailCode = document.getElementById("sync-email-code-input") as HTMLInputElement;
+const btnSyncEmailCode = document.getElementById("btn-sync-email-code") as HTMLButtonElement;
+const btnSyncEmailVerify = document.getElementById("btn-sync-email-verify") as HTMLButtonElement;
+const syncEmailCodeRow = document.getElementById("sync-email-code-row") as HTMLDivElement;
+const syncEmailStatus = document.getElementById("sync-email-status") as HTMLDivElement;
 
 let qrPollTimer: ReturnType<typeof setInterval> | null = null;
 let currentQrScene = "";
@@ -1257,40 +1266,55 @@ async function loadSyncConfig() {
         if (config) {
             inputSyncServerAddr.value = config.syncAddr || "";
             inputSyncAutoSync.checked = config.autoSync === "true";
-            updateSyncUI(config.syncToken, config.syncQrCode);
+            if (config.syncEmail) {
+                inputSyncEmail.value = config.syncEmail;
+            }
+            updateSyncUI(config.syncToken, config.syncQrCode, config.syncEmail);
         }
     } catch (err) {
         console.error("Failed to load sync config:", err);
     }
 }
 
-function updateSyncUI(token?: string, qrcode?: string) {
+function updateSyncUI(token?: string, qrcode?: string, email?: string) {
     const hasToken = !!token;
     if (hasToken) {
-        // Linked state: hide server addr & QR login, show linked card with cached QR
+        // Linked state: hide server addr & login sections, show linked card
         syncServerSection.classList.add("hidden");
         syncQrSection.classList.add("hidden");
+        syncEmailSection.classList.add("hidden");
         syncLinkedSection.classList.remove("hidden");
-        if (qrcode) {
+        if (email) {
+            syncLinkedQrImage.classList.add("hidden");
+            syncLinkedStatus.textContent = `🟢 Linked via email: ${email}`;
+            syncLinkedHint.textContent = "Use the same email on other devices (Android app) to share word data.";
+        } else if (qrcode) {
             syncLinkedQrImage.src = qrcode;
             syncLinkedQrImage.classList.remove("hidden");
+            syncLinkedStatus.textContent = "🟢 Linked via WeChat";
+            syncLinkedHint.textContent = "Scan this QR code on another device to link it to the same account.";
         } else {
             syncLinkedQrImage.classList.add("hidden");
+            syncLinkedStatus.textContent = "🟢 Sync Connected";
+            syncLinkedHint.textContent = "";
         }
     } else {
-        // Unlinked state: show server addr & QR login, hide linked card
+        // Unlinked state: show server addr & login sections, hide linked card
         syncServerSection.classList.remove("hidden");
         syncQrSection.classList.remove("hidden");
+        syncEmailSection.classList.remove("hidden");
         syncLinkedSection.classList.add("hidden");
     }
 }
 
 async function unlinkSync() {
-    if (!confirm("Unlink your WeChat account? You will need to scan a new QR code to re-link.")) return;
+    if (!confirm("Unlink your account? You will need to log in again to re-link.")) return;
     try {
         await UnlinkSync();
         updateSyncUI();
-        showToast("WeChat account unlinked");
+        syncEmailCodeRow.classList.add("hidden");
+        syncEmailStatus.textContent = "";
+        showToast("Account unlinked");
     } catch (err: any) {
         showError("Unlink failed: " + String(err));
     }
@@ -1365,7 +1389,7 @@ function startQrPoll() {
                 stopQrPoll();
                 // Reload config to get the saved token + QR code, then update UI
                 const config = await GetSyncConfig() as any;
-                updateSyncUI(config.syncToken, config.syncQrCode);
+                updateSyncUI(config.syncToken, config.syncQrCode, config.syncEmail);
                 qrCodeDisplay.classList.add("hidden");
                 qrStatusText.textContent = "✅ Login successful! Token saved.";
                 showToast("WeChat login successful! ✅");
@@ -1441,6 +1465,57 @@ btnSyncPush.addEventListener("click", syncPush);
 btnSyncPull.addEventListener("click", syncPull);
 btnSaveSyncConfig.addEventListener("click", saveSyncConfig);
 btnSyncUnlink.addEventListener("click", unlinkSync);
+
+// Email auth handlers
+async function requestEmailCode() {
+    const email = inputSyncEmail.value.trim();
+    if (!email) {
+        syncEmailStatus.textContent = "Please enter your email address";
+        return;
+    }
+    try {
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
+        btnSyncEmailCode.disabled = true;
+        btnSyncEmailCode.textContent = "Sending...";
+        syncEmailStatus.textContent = "Sending verification code...";
+        const msg = await RequestEmailCode(email);
+        syncEmailCodeRow.classList.remove("hidden");
+        syncEmailStatus.textContent = msg || "Verification code sent! Check your email.";
+    } catch (err: any) {
+        syncEmailStatus.textContent = "Failed: " + String(err);
+    } finally {
+        btnSyncEmailCode.disabled = false;
+        btnSyncEmailCode.textContent = "📧 Send Verification Code";
+    }
+}
+
+async function verifyEmailCode() {
+    const email = inputSyncEmail.value.trim();
+    const code = inputSyncEmailCode.value.trim();
+    if (!code) {
+        syncEmailStatus.textContent = "Please enter the 6-digit code";
+        return;
+    }
+    try {
+        btnSyncEmailVerify.disabled = true;
+        btnSyncEmailVerify.textContent = "Verifying...";
+        syncEmailStatus.textContent = "Verifying...";
+        const msg = await VerifyEmailCode(email, code);
+        // Reload config to get saved token + email, then update UI
+        const config = await GetSyncConfig() as any;
+        updateSyncUI(config.syncToken, config.syncQrCode, config.syncEmail);
+        syncEmailStatus.textContent = msg;
+        showToast("Email login successful! ✅");
+    } catch (err: any) {
+        syncEmailStatus.textContent = "Failed: " + String(err);
+    } finally {
+        btnSyncEmailVerify.disabled = false;
+        btnSyncEmailVerify.textContent = "✅ Verify";
+    }
+}
+
+btnSyncEmailCode.addEventListener("click", requestEmailCode);
+btnSyncEmailVerify.addEventListener("click", verifyEmailCode);
 
 // Load sync config when settings panel is shown
 const origShowSettings = showSettings;

@@ -2067,8 +2067,9 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 type SyncService struct {
 	history      *HistoryService
 	syncAddr     string // Remote sync server address, e.g. http://your-server:9274
-	syncToken    string // User Token (assigned by server via QR code login or legacy create)
+	syncToken    string // User Token (assigned by server via QR code login, email login, or legacy create)
 	syncQrCode   string // Cached QR code image (base64 data URL) from last successful login
+	syncEmail    string // Email address used for login (if email auth was used)
 	autoSync     bool   // Whether auto-sync is enabled
 	lastSyncTime int64  // Unix timestamp of last successful sync (for incremental pull)
 }
@@ -2099,6 +2100,7 @@ func (s *SyncService) loadConfig() {
 		SyncAddr     string `json:"syncAddr"`
 		SyncToken    string `json:"syncToken"`
 		SyncQrCode   string `json:"syncQrCode"`
+		SyncEmail    string `json:"syncEmail"`
 		AutoSync     bool   `json:"autoSync"`
 		LastSyncTime int64  `json:"lastSyncTime"`
 	}
@@ -2106,6 +2108,7 @@ func (s *SyncService) loadConfig() {
 		s.syncAddr = cfg.SyncAddr
 		s.syncToken = cfg.SyncToken
 		s.syncQrCode = cfg.SyncQrCode
+		s.syncEmail = cfg.SyncEmail
 		s.autoSync = cfg.AutoSync
 		s.lastSyncTime = cfg.LastSyncTime
 	}
@@ -2117,6 +2120,7 @@ func (s *SyncService) saveConfig() error {
 		"syncAddr":     s.syncAddr,
 		"syncToken":    s.syncToken,
 		"syncQrCode":   s.syncQrCode,
+		"syncEmail":    s.syncEmail,
 		"autoSync":     s.autoSync,
 		"lastSyncTime": s.lastSyncTime,
 	}, "", "  ")
@@ -2133,6 +2137,7 @@ func (s *SyncService) GetSyncConfig() map[string]string {
 		"syncAddr":  s.syncAddr,
 		"syncToken": s.syncToken,
 		"syncQrCode": s.syncQrCode,
+		"syncEmail": s.syncEmail,
 		"autoSync":  autoSyncStr,
 	}
 }
@@ -2155,6 +2160,7 @@ func (s *SyncService) SaveSyncConfig(syncAddr, syncToken string, autoSync bool) 
 func (s *SyncService) UnlinkSync() error {
 	s.syncToken = ""
 	s.syncQrCode = ""
+	s.syncEmail = ""
 	return s.saveConfig()
 }
 
@@ -2309,6 +2315,104 @@ func (s *SyncService) PollQrCodeStatus(scene string) (map[string]interface{}, er
 	}
 
 	return result, nil
+}
+
+// RequestEmailCode requests a verification code be sent to the given email.
+// Returns a human-readable message (e.g. "Verification code sent to your email").
+func (s *SyncService) RequestEmailCode(email string) (string, error) {
+	if s.syncAddr == "" {
+		return "", fmt.Errorf("please set sync server address first")
+	}
+	if email == "" {
+		return "", fmt.Errorf("email is required")
+	}
+
+	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/email/request"
+	body, _ := json.Marshal(map[string]string{"email": email})
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		var errResp map[string]interface{}
+		if json.Unmarshal(respBody, &errResp) == nil {
+			if msg, ok := errResp["error"].(string); ok {
+				return "", fmt.Errorf(msg)
+			}
+		}
+		return "", fmt.Errorf("server error (HTTP %d)", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse response failed: %v", err)
+	}
+
+	msg, _ := result["message"].(string)
+	if msg == "" {
+		msg = "Verification code sent"
+	}
+	return msg, nil
+}
+
+// VerifyEmailCode verifies the email code and saves the token on success.
+// Returns a human-readable message.
+func (s *SyncService) VerifyEmailCode(email, code string) (string, error) {
+	if s.syncAddr == "" {
+		return "", fmt.Errorf("please set sync server address first")
+	}
+	if email == "" || code == "" {
+		return "", fmt.Errorf("email and code are required")
+	}
+
+	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/email/verify"
+	body, _ := json.Marshal(map[string]string{"email": email, "code": code})
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("verify failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		var errResp map[string]interface{}
+		if json.Unmarshal(respBody, &errResp) == nil {
+			if msg, ok := errResp["error"].(string); ok {
+				return "", fmt.Errorf(msg)
+			}
+		}
+		return "", fmt.Errorf("server error (HTTP %d)", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse response failed: %v", err)
+	}
+
+	token, _ := result["token"].(string)
+	if token == "" {
+		msg, _ := result["message"].(string)
+		if msg == "" {
+			msg = "Verification failed"
+		}
+		return msg, fmt.Errorf("verification failed")
+	}
+
+	// Save token and email
+	s.syncToken = token
+	s.syncEmail = email
+	s.syncQrCode = "" // Clear QR code since we used email auth
+	s.saveConfig()
+	log.Printf("SyncService: email login complete, token saved for %s", email)
+
+	return "Login successful! ✅", nil
 }
 
 // CreateUser creates a new user on the remote server and returns the token (legacy).

@@ -125,8 +125,8 @@
                             <img id="sync-linked-qr-image" class="qr-code-image" alt="Your linked QR code"/>
                         </div>
                         <div class="sync-linked-info">
-                            <div class="sync-linked-status">🟢 Linked to WeChat account</div>
-                            <div class="sync-linked-hint">Scan this QR code on another device to link it to the same account</div>
+                            <div id="sync-linked-status" class="sync-linked-status">🟢 Linked</div>
+                            <div id="sync-linked-hint" class="sync-linked-hint"></div>
                         </div>
                         <button id="btn-sync-unlink" class="danger-btn" type="button" style="width:100%;margin-top:8px;">🔓 Unlink & Re-link</button>
                     </div>
@@ -134,7 +134,7 @@
 
                 <!-- QR Code Login Section (hidden when linked) -->
                 <div id="sync-qr-section" class="form-group">
-                    <label>🔐 WeChat QR Code Login</label>
+                    <label>📱 WeChat Mini Program Login</label>
                     <div class="qr-login-area">
                         <div id="qr-code-display" class="qr-code-display hidden">
                             <img id="qr-code-image" class="qr-code-image" alt="Scan QR code with WeChat"/>
@@ -145,7 +145,25 @@
                             <button id="btn-sync-qrcode" class="primary-btn" type="button" style="width:100%">📱 Generate QR Code</button>
                         </div>
                     </div>
-                    <small class="form-hint">Scan the QR code with WeChat to log in. The mini program will open and authenticate automatically.</small>
+                    <small class="form-hint">Scan the QR code with <b>WeChat</b> to open the mini program and authenticate. This links your WeChat account.</small>
+                </div>
+
+                <div id="sync-email-section" class="form-group">
+                    <label>📧 Email Login</label>
+                    <div class="email-login-area">
+                        <input type="email" id="sync-email-input" placeholder="your@email.com" style="width:100%;margin-bottom:6px;"/>
+                        <div class="sync-actions">
+                            <button id="btn-sync-email-code" class="primary-btn" type="button" style="width:100%">📧 Send Verification Code</button>
+                        </div>
+                        <div id="sync-email-code-row" class="hidden" style="margin-top:6px;">
+                            <div style="display:flex;gap:6px;">
+                                <input type="text" id="sync-email-code-input" placeholder="6-digit code" maxlength="6" style="flex:1;"/>
+                                <button id="btn-sync-email-verify" class="primary-btn" type="button" style="flex:0 0 auto;">✅ Verify</button>
+                            </div>
+                        </div>
+                        <div id="sync-email-status" class="qr-status-text" style="margin-top:4px;"></div>
+                    </div>
+                    <small class="form-hint">Enter your email to receive a 6-digit code. Use the <b>same code</b> on both PC and Android app within 10 minutes to link them to the same account.</small>
                 </div>
 
                 <div class="form-group">

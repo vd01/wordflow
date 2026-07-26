@@ -977,8 +977,9 @@ func (s *Server) handleEmailCodeVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the used code
-	s.store.DeleteEmailCode(req.Email, req.Code)
+	// Note: We do NOT delete the code after verification, so the same code can be
+	// used on another device (e.g. Android app) within the 10-minute window.
+	// The code will expire naturally via its TTL.
 
 	log.Printf("AUTH  Email login SUCCESS: email=%s, token=%s...", req.Email, token[:min(8, len(token))])
 
