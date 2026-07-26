@@ -610,3 +610,38 @@ func (s *Store) cleanExpiredAuthSessions() {
 		log.Printf("Cleaned %d expired auth sessions", affected)
 	}
 }
+
+// ListAuthSessions returns a summary of all auth sessions (for debug logging).
+// Returns slice of "scene:status" strings.
+func (s *Store) ListAuthSessions() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		"SELECT scene, status, expires_at FROM auth_sessions ORDER BY created_at DESC LIMIT 20",
+	)
+	if err != nil {
+		return []string{"(query error: " + err.Error() + ")"}
+	}
+	defer rows.Close()
+
+	var result []string
+	now := time.Now().Unix()
+	for rows.Next() {
+		var scene, status string
+		var expiresAt int64
+		if err := rows.Scan(&scene, &status, &expiresAt); err != nil {
+			continue
+		}
+		expired := ""
+		if now > expiresAt {
+			expired = " [EXPIRED]"
+		}
+		result = append(result, fmt.Sprintf("%s:%s%s", scene, status, expired))
+	}
+
+	if len(result) == 0 {
+		return []string{"(none)"}
+	}
+	return result
+}

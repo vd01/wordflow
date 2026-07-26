@@ -602,8 +602,8 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("AUTH  WeChat login request: code=%s..., scene=%s",
-		req.Code[:min(8, len(req.Code))], req.Scene)
+	log.Printf("AUTH  WeChat login request: code=%s..., scene=%q, raw-body=%s",
+		req.Code[:min(8, len(req.Code))], req.Scene, truncate(string(body), 300))
 
 	if req.Code == "" {
 		writeError(w, http.StatusBadRequest, "Missing code parameter (from wx.login)")
@@ -617,7 +617,9 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 	// Verify the auth session exists and is still pending
 	sess, err := s.store.GetAuthSession(req.Scene)
 	if err != nil {
-		log.Printf("AUTH  WeChat login: scene=%s → session not found", req.Scene)
+		// Log existing sessions to help debug
+		sessions := s.store.ListAuthSessions()
+		log.Printf("AUTH  WeChat login: scene=%q → session not found. Existing sessions: %v", req.Scene, sessions)
 		writeError(w, http.StatusNotFound, "Session not found or expired, please request a new QR code")
 		return
 	}
