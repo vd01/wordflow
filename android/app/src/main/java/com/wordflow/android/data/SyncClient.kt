@@ -67,6 +67,13 @@ class SyncClient {
         return post(url, body, AuthResponse::class.java)
     }
 
+    /** Verify a pairing code and get a token. No email required. */
+    fun verifyPairCode(serverAddr: String, code: String): AuthResponse {
+        val url = base(serverAddr) + "/api/v1/auth/pair/verify"
+        val body = gson.toJson(PairCodeRequest(code))
+        return post(url, body, AuthResponse::class.java)
+    }
+
     // ── Internal ──
 
     private fun base(addr: String): String =

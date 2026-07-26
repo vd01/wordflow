@@ -58,6 +58,10 @@ data class AuthResponse(
     val message: String = ""
 )
 
+data class PairCodeRequest(
+    val code: String
+)
+
 /** Parsed result from a SyncEntry's result JSON. */
 data class ParsedResult(
     val word: String = "",

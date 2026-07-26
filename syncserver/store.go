@@ -665,7 +665,7 @@ func (s *Store) CreateEmailCode(email string, ttl time.Duration) (string, error)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate code failed: %v", err)
 	}
-	code := fmt.Sprintf("%06d", int(b[0])<<16|int(b[1])<<8|int(b[2])%1000000)
+	code := fmt.Sprintf("%06d", (int(b[0])<<16|int(b[1])<<8|int(b[2]))%1000000)
 
 	now := time.Now().Unix()
 	expiresAt := now + int64(ttl.Seconds())
@@ -779,5 +779,80 @@ func (s *Store) ensureEmailCodesTable() {
 		created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 		expires_at INTEGER NOT NULL,
 		PRIMARY KEY (email, code)
+	)`)
+}
+
+// ============================================================
+// Pairing code methods
+// ============================================================
+
+// CreatePairCode generates a 6-digit pairing code for the given token.
+// The code expires after ttl. Returns the code string.
+func (s *Store) CreatePairCode(token string, ttl time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ensurePairCodesTable()
+
+	// Generate 6-digit code
+	b := make([]byte, 3)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate code failed: %v", err)
+	}
+	code := fmt.Sprintf("%06d", (int(b[0])<<16|int(b[1])<<8|int(b[2]))%1000000)
+
+	now := time.Now().Unix()
+	expiresAt := now + int64(ttl.Seconds())
+
+	// Delete any existing code for this token
+	s.db.Exec("DELETE FROM pair_codes WHERE token = ?", token)
+
+	_, err := s.db.Exec(
+		"INSERT INTO pair_codes (code, token, created_at, expires_at) VALUES (?, ?, ?, ?)",
+		code, token, now, expiresAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("insert pair code failed: %v", err)
+	}
+
+	log.Printf("Pair code created: code=%s, expires_in=%ds", code, int(ttl.Seconds()))
+	return code, nil
+}
+
+// VerifyPairCode checks if the given code is valid and returns the associated token.
+func (s *Store) VerifyPairCode(code string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.ensurePairCodesTable()
+
+	var token string
+	var expiresAt int64
+	err := s.db.QueryRow(
+		"SELECT token, expires_at FROM pair_codes WHERE code = ?",
+		code,
+	).Scan(&token, &expiresAt)
+
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query pair code failed: %v", err)
+	}
+
+	if time.Now().Unix() > expiresAt {
+		return "", nil // expired
+	}
+
+	return token, nil
+}
+
+// ensurePairCodesTable creates the pair_codes table if it doesn't exist.
+func (s *Store) ensurePairCodesTable() {
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS pair_codes (
+		code       TEXT NOT NULL PRIMARY KEY,
+		token      TEXT NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		expires_at INTEGER NOT NULL
 	)`)
 }

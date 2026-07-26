@@ -73,6 +73,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/auth/email/request", s.handleEmailCodeRequest)
 	mux.HandleFunc("/api/v1/auth/email/verify", s.handleEmailCodeVerify)
 
+	// Pairing code routes (for linking devices without email)
+	mux.HandleFunc("/api/v1/auth/pair/request", s.handlePairCodeRequest)
+	mux.HandleFunc("/api/v1/auth/pair/verify", s.handlePairCodeVerify)
+
 	// Health check
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 
@@ -95,6 +99,8 @@ func (s *Server) Start() error {
 	log.Printf("  POST /api/v1/auth/wechat/login    - WeChat mini program login")
 	log.Printf("  POST /api/v1/auth/email/request  - Request email verification code")
 	log.Printf("  POST /api/v1/auth/email/verify    - Verify email code and get token")
+	log.Printf("  POST /api/v1/auth/pair/request   - Request pairing code (requires token)")
+	log.Printf("  POST /api/v1/auth/pair/verify     - Verify pairing code and get token")
 	log.Printf("  GET  /api/v1/user/status          - View user sync status")
 	log.Printf("  POST /api/v1/sync/push            - Push word data to server")
 	log.Printf("  GET  /api/v1/sync/pull            - Pull word data (incremental sync)")
@@ -214,6 +220,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			"/api/v1/auth/wechat/login":   true,
 			"/api/v1/auth/email/request": true,
 			"/api/v1/auth/email/verify":   true,
+			"/api/v1/auth/pair/verify":     true,
 			"/api/v1/health":              true,
 		}
 
@@ -1044,4 +1051,84 @@ func (s *Server) sendEmailCode(toEmail, code string) {
 	} else {
 		log.Printf("AUTH  Verification code email sent to %s", toEmail)
 	}
+}
+
+// handlePairCodeRequest generates a pairing code for an already-authenticated user.
+// POST /api/v1/auth/pair/request
+// Requires: Authorization header with Bearer token
+// Returns: { "code": "123456", "expiresIn": 600 }
+func (s *Server) handlePairCodeRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
+		return
+	}
+
+	// Token is already validated by authMiddleware, extract from header
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if token == "" {
+		writeError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+
+	code, err := s.store.CreatePairCode(token, 10*time.Minute)
+	if err != nil {
+		log.Printf("AUTH  Pair code creation failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to create pairing code")
+		return
+	}
+
+	log.Printf("AUTH  Pair code created: code=%s", code)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"code":      code,
+		"expiresIn": 600,
+	})
+}
+
+// handlePairCodeVerify verifies a pairing code and returns the associated token.
+// POST /api/v1/auth/pair/verify
+// Body: { "code": "123456" }
+// Returns: { "token": "...", "message": "Login successful" }
+func (s *Server) handlePairCodeVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON parse failed: "+err.Error())
+		return
+	}
+
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "Missing code parameter")
+		return
+	}
+
+	token, err := s.store.VerifyPairCode(req.Code)
+	if err != nil {
+		log.Printf("AUTH  Pair code verify failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "Verification failed")
+		return
+	}
+
+	if token == "" {
+		writeError(w, http.StatusUnauthorized, "Invalid or expired pairing code")
+		return
+	}
+
+	log.Printf("AUTH  Pair code login SUCCESS: code=%s, token=%s...", req.Code, token[:min(8, len(token))])
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token":   token,
+		"message": "Login successful",
+	})
 }

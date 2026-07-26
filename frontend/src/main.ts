@@ -2,7 +2,7 @@ import { Events } from "@wailsio/runtime";
 import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
-import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode } from "../bindings/wordflow/syncservice.js";
+import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode, RequestPairCode } from "../bindings/wordflow/syncservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -1516,6 +1516,29 @@ async function verifyEmailCode() {
 
 btnSyncEmailCode.addEventListener("click", requestEmailCode);
 btnSyncEmailVerify.addEventListener("click", verifyEmailCode);
+
+// Pairing code
+const btnSyncPairCode = document.getElementById("btn-sync-pair-code") as HTMLButtonElement;
+const syncPairCodeDisplay = document.getElementById("sync-pair-code-display") as HTMLDivElement;
+const syncPairCodeText = document.getElementById("sync-pair-code-text") as HTMLDivElement;
+
+async function requestPairCode() {
+    try {
+        btnSyncPairCode.disabled = true;
+        btnSyncPairCode.textContent = "Generating...";
+        const code = await RequestPairCode();
+        syncPairCodeText.textContent = code;
+        syncPairCodeDisplay.classList.remove("hidden");
+        btnSyncPairCode.textContent = "📱 Regenerate Pairing Code";
+    } catch (err: any) {
+        showError("Pair code failed: " + String(err));
+        btnSyncPairCode.textContent = "📱 Generate Pairing Code";
+    } finally {
+        btnSyncPairCode.disabled = false;
+    }
+}
+
+btnSyncPairCode.addEventListener("click", requestPairCode);
 
 // Load sync config when settings panel is shown
 const origShowSettings = showSettings;

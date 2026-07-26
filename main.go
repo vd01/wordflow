@@ -2415,7 +2415,50 @@ func (s *SyncService) VerifyEmailCode(email, code string) (string, error) {
 	return "Login successful! ✅", nil
 }
 
-// CreateUser creates a new user on the remote server and returns the token (legacy).
+// RequestPairCode generates a pairing code on the server for this user.
+// Returns the 6-digit code string.
+func (s *SyncService) RequestPairCode() (string, error) {
+	if s.syncAddr == "" {
+		return "", fmt.Errorf("please set sync server address first")
+	}
+	if s.syncToken == "" {
+		return "", fmt.Errorf("please log in first")
+	}
+
+	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/pair/request"
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, _ := http.NewRequest("POST", url, nil)
+	req.Header.Set("Authorization", "Bearer "+s.syncToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		var errResp map[string]interface{}
+		if json.Unmarshal(respBody, &errResp) == nil {
+			if msg, ok := errResp["error"].(string); ok {
+				return "", fmt.Errorf(msg)
+			}
+		}
+		return "", fmt.Errorf("server error (HTTP %d)", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse response failed: %v", err)
+	}
+
+	code, _ := result["code"].(string)
+	if code == "" {
+		return "", fmt.Errorf("server did not return a pairing code")
+	}
+	return code, nil
+}
 func (s *SyncService) CreateUser() (string, error) {
 	if s.syncAddr == "" {
 		return "", fmt.Errorf("please set sync server address first")
