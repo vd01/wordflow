@@ -786,7 +786,7 @@ func (s *Store) ensureEmailCodesTable() {
 // Pairing code methods
 // ============================================================
 
-// CreatePairCode generates a 6-digit pairing code for the given token.
+// CreatePairCode generates an 8-digit pairing code for the given token.
 // The code expires after ttl. Returns the code string.
 func (s *Store) CreatePairCode(token string, ttl time.Duration) (string, error) {
 	s.mu.Lock()
@@ -794,12 +794,12 @@ func (s *Store) CreatePairCode(token string, ttl time.Duration) (string, error) 
 
 	s.ensurePairCodesTable()
 
-	// Generate 6-digit code
-	b := make([]byte, 3)
+	// Generate 8-digit code
+	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate code failed: %v", err)
 	}
-	code := fmt.Sprintf("%06d", (int(b[0])<<16|int(b[1])<<8|int(b[2]))%1000000)
+	code := fmt.Sprintf("%08d", (int(b[0])<<24|int(b[1])<<16|int(b[2])<<8|int(b[3]))%100000000)
 
 	now := time.Now().Unix()
 	expiresAt := now + int64(ttl.Seconds())

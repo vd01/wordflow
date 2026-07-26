@@ -1053,10 +1053,10 @@ func (s *Server) sendEmailCode(toEmail, code string) {
 	}
 }
 
-// handlePairCodeRequest generates a pairing code for an already-authenticated user.
+// handlePairCodeRequest generates an 8-digit pairing code for an already-authenticated user.
 // POST /api/v1/auth/pair/request
 // Requires: Authorization header with Bearer token
-// Returns: { "code": "123456", "expiresIn": 600 }
+// Returns: { "code": "12345678", "expiresIn": 600 }
 func (s *Server) handlePairCodeRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
