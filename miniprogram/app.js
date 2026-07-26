@@ -46,10 +46,9 @@ App({
     }
   },
 
-  setConfig(serverAddr, token) {
-    this.globalData.serverAddr = serverAddr
+  setToken(token) {
     this.globalData.token = token
-    config.save(serverAddr, token)
+    config.save(token)
   },
 
   // Perform WeChat login: call wx.login() then send code+scene to server
@@ -77,7 +76,7 @@ App({
 
     if (result.token) {
       // Save the token
-      this.setConfig(serverAddr, result.token)
+      this.setToken(result.token)
       return result.token
     }
 

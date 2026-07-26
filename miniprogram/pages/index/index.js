@@ -36,7 +36,6 @@ function refreshCounts() {
 
 Page({
   data: {
-    serverAddr: '',
     token: '',
     status: '',
     busy: false,
@@ -46,15 +45,14 @@ Page({
     offline: false,
     // QR code login state
     loggedIn: false,       // whether user has a valid token
-    pairingCode: '',       // scene/pairing code displayed on desktop
+    pairingCode: '',       // scene/pairing code from desktop
     loginBusy: false       // login in progress
   },
 
   onLoad() {
     this.setData({
-      serverAddr: app.globalData.serverAddr,
       token: app.globalData.token,
-      loggedIn: !!(app.globalData.serverAddr && app.globalData.token),
+      loggedIn: !!app.globalData.token,
       ...refreshCounts()
     })
 
@@ -82,7 +80,7 @@ Page({
     this.checkNetwork()
     wx.onNetworkStatusChange((res) => {
       this.setData({ offline: !res.isConnected })
-      if (res.isConnected && this.data.serverAddr && this.data.token) {
+      if (res.isConnected && app.globalData.token) {
         this.doSync()
       }
     })
@@ -91,7 +89,7 @@ Page({
   onShow() {
     this.setData({
       ...refreshCounts(),
-      loggedIn: !!(app.globalData.serverAddr && app.globalData.token)
+      loggedIn: !!app.globalData.token
     })
   },
 
@@ -105,29 +103,14 @@ Page({
     })
   },
 
-  onAddr(e) { this.setData({ serverAddr: e.detail.value }) },
   onDailyLimit(e) {
     const n = parseInt(e.detail.value, 10) || 0
     this.setData({ dailyLimit: n })
     store.setDailyLimit(n)
   },
 
-  // Save server address only (token comes from login now)
-  saveAddr() {
-    if (!this.data.serverAddr) {
-      this.setData({ status: 'Please enter server address' }); return
-    }
-    app.setConfig(this.data.serverAddr, app.globalData.token || '')
-    this.setData({ status: 'Server address saved' })
-  },
-
   // Handle login when user scans QR code and mini program opens with scene
   async handleSceneLogin(scene) {
-    if (!this.data.serverAddr) {
-      this.setData({ status: 'Please configure server address first' })
-      return
-    }
-
     this.setData({ loginBusy: true, status: 'Logging in via WeChat...', pairingCode: scene })
     try {
       const token = await app.doWeChatLogin(scene)
@@ -161,31 +144,25 @@ Page({
       this.setData({ status: 'Please enter the pairing code from desktop app' })
       return
     }
-    if (!this.data.serverAddr) {
-      this.setData({ status: 'Please configure server address first' })
-      return
-    }
     await this.handleSceneLogin(scene)
   },
 
   // Test connection
   async testConn() {
-    if (!this.data.serverAddr) {
-      this.setData({ status: 'Please enter server address' }); return
-    }
     if (this.data.offline) {
       this.setData({ status: 'No network connection' }); return
     }
     this.setData({ busy: true, status: 'Testing...' })
+    const serverAddr = app.globalData.serverAddr
     try {
-      const h = await sync.health(this.data.serverAddr)
+      const h = await sync.health(serverAddr)
       let status = 'Connected: ' + (h.service || 'wordwise-sync') + ' v' + (h.version || '?')
       if (h.wechat) {
         status += ' (WeChat auth enabled)'
       }
       if (this.data.token) {
         try {
-          const st = await sync.getStatus(this.data.serverAddr, this.data.token)
+          const st = await sync.getStatus(serverAddr, this.data.token)
           status += ' | Remote words: ' + st.wordCount
           this.setData({ wordCount: st.wordCount, lastSyncDisplay: formatSyncTime(st.lastSync) })
         } catch (e) {
@@ -202,8 +179,9 @@ Page({
 
   // Unified sync method (used by pullAll, auto-sync, network reconnect)
   async doSync(since) {
-    const { serverAddr, token, offline } = this.data
-    if (!serverAddr || !token || offline) return
+    const serverAddr = app.globalData.serverAddr
+    const token = app.globalData.token
+    if (!serverAddr || !token || this.data.offline) return
 
     this.setData({ busy: true, status: 'Syncing...' })
     try {

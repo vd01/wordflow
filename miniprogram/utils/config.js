@@ -1,22 +1,23 @@
-// Local config persistence (server address + sync token) in wx storage.
+// Local config persistence (sync token) in wx storage.
 const STORAGE_KEY = 'wordwise_config'
 
-const DEFAULT_SERVER = 'https://vocab-agent.duckdns.org:31588/'
+// Fixed sync server URL — not user-configurable
+const SERVER_ADDR = 'https://vocab-agent.duckdns.org:31588'
 
 function load() {
   try {
     const v = wx.getStorageSync(STORAGE_KEY)
     if (v && typeof v === 'object') {
-      return { serverAddr: v.serverAddr || DEFAULT_SERVER, token: v.token || '' }
+      return { serverAddr: SERVER_ADDR, token: v.token || '' }
     }
   } catch (e) {}
-  return { serverAddr: DEFAULT_SERVER, token: '' }
+  return { serverAddr: SERVER_ADDR, token: '' }
 }
 
-function save(serverAddr, token) {
+function save(token) {
   try {
-    wx.setStorageSync(STORAGE_KEY, { serverAddr, token })
+    wx.setStorageSync(STORAGE_KEY, { serverAddr: SERVER_ADDR, token })
   } catch (e) {}
 }
 
-module.exports = { load, save, STORAGE_KEY }
+module.exports = { load, save, SERVER_ADDR, STORAGE_KEY }

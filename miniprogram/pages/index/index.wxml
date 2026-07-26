@@ -4,14 +4,6 @@
     📴 No network — local review only
   </view>
 
-  <view class="card">
-    <view class="muted">Server address (https + registered domain)</view>
-    <input class="input" value="{{serverAddr}}" bindinput="onAddr"
-      placeholder="https://vocab-agent.duckdns.org:31588/" />
-    <view class="btn" bindtap="saveAddr">Save address</view>
-    <view class="btn" bindtap="testConn" disabled="{{busy || offline}}">Test connection</view>
-  </view>
-
   <!-- Login section: shown when not logged in -->
   <view class="card" wx:if="{{!loggedIn}}">
     <view class="section-title">🔐 WeChat Login</view>
@@ -27,6 +19,7 @@
   <view class="card" wx:if="{{loggedIn}}">
     <view class="section-title">✅ Sync Connected</view>
     <view class="muted">Token: {{token.substring(0, 8)}}...</view>
+    <view class="btn" bindtap="testConn" disabled="{{busy || offline}}">Test connection</view>
     <view class="btn" bindtap="pullAll" disabled="{{busy || offline}}">Pull all words</view>
   </view>
 
