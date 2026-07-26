@@ -1422,3 +1422,42 @@ body {
     color: var(--text-muted);
     text-align: center;
 }
+
+/* ===== Sync Linked Card ===== */
+.sync-linked-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+}
+
+.sync-linked-qr {
+    display: flex;
+    justify-content: center;
+}
+
+.sync-linked-qr .qr-code-image {
+    width: 160px;
+    height: 160px;
+    opacity: 0.85;
+}
+
+.sync-linked-info {
+    text-align: center;
+}
+
+.sync-linked-status {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+
+.sync-linked-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}

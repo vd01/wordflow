@@ -2,7 +2,7 @@ import { Events } from "@wailsio/runtime";
 import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
-import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus } from "../bindings/wordflow/syncservice.js";
+import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync } from "../bindings/wordflow/syncservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -1109,9 +1109,7 @@ searchInput.focus();
 // Sync - Multi-device sync with WeChat QR code login
 // ============================================================
 const inputSyncServerAddr = document.getElementById("sync-server-addr") as HTMLInputElement;
-const inputSyncUserToken = document.getElementById("sync-user-token") as HTMLInputElement;
 const inputSyncAutoSync = document.getElementById("sync-auto-sync") as HTMLInputElement;
-const btnToggleSyncToken = document.getElementById("btn-toggle-sync-token") as HTMLButtonElement;
 const btnSyncTest = document.getElementById("btn-sync-test") as HTMLButtonElement;
 const btnSyncPush = document.getElementById("btn-sync-push") as HTMLButtonElement;
 const btnSyncPull = document.getElementById("btn-sync-pull") as HTMLButtonElement;
@@ -1121,7 +1119,11 @@ const qrCodeDisplay = document.getElementById("qr-code-display") as HTMLDivEleme
 const qrCodeImage = document.getElementById("qr-code-image") as HTMLImageElement;
 const qrPairingCode = document.getElementById("qr-pairing-code") as HTMLDivElement;
 const qrStatusText = document.getElementById("qr-status-text") as HTMLDivElement;
-const syncTokenSection = document.getElementById("sync-token-section") as HTMLDivElement;
+const syncServerSection = document.getElementById("sync-server-section") as HTMLDivElement;
+const syncLinkedSection = document.getElementById("sync-linked-section") as HTMLDivElement;
+const syncLinkedQrImage = document.getElementById("sync-linked-qr-image") as HTMLImageElement;
+const syncQrSection = document.getElementById("sync-qr-section") as HTMLDivElement;
+const btnSyncUnlink = document.getElementById("btn-sync-unlink") as HTMLButtonElement;
 
 let qrPollTimer: ReturnType<typeof setInterval> | null = null;
 let currentQrScene = "";
@@ -1131,28 +1133,49 @@ async function loadSyncConfig() {
         const config = await GetSyncConfig() as any;
         if (config) {
             inputSyncServerAddr.value = config.syncAddr || "";
-            inputSyncUserToken.value = config.syncToken || "";
             inputSyncAutoSync.checked = config.autoSync === "true";
-            // Show/hide token section based on whether token exists
-            updateSyncUI(config.syncToken);
+            updateSyncUI(config.syncToken, config.syncQrCode);
         }
     } catch (err) {
         console.error("Failed to load sync config:", err);
     }
 }
 
-function updateSyncUI(token?: string) {
-    const hasToken = !!(token || inputSyncUserToken.value);
+function updateSyncUI(token?: string, qrcode?: string) {
+    const hasToken = !!token;
     if (hasToken) {
-        syncTokenSection.classList.remove("hidden");
+        // Linked state: hide server addr & QR login, show linked card with cached QR
+        syncServerSection.classList.add("hidden");
+        syncQrSection.classList.add("hidden");
+        syncLinkedSection.classList.remove("hidden");
+        if (qrcode) {
+            syncLinkedQrImage.src = qrcode;
+            syncLinkedQrImage.classList.remove("hidden");
+        } else {
+            syncLinkedQrImage.classList.add("hidden");
+        }
     } else {
-        syncTokenSection.classList.add("hidden");
+        // Unlinked state: show server addr & QR login, hide linked card
+        syncServerSection.classList.remove("hidden");
+        syncQrSection.classList.remove("hidden");
+        syncLinkedSection.classList.add("hidden");
+    }
+}
+
+async function unlinkSync() {
+    if (!confirm("Unlink your WeChat account? You will need to scan a new QR code to re-link.")) return;
+    try {
+        await UnlinkSync();
+        updateSyncUI();
+        showToast("WeChat account unlinked");
+    } catch (err: any) {
+        showError("Unlink failed: " + String(err));
     }
 }
 
 async function testConnection() {
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
         btnSyncTest.disabled = true;
         btnSyncTest.textContent = "Testing...";
         const result = await TestConnection();
@@ -1170,7 +1193,7 @@ async function requestQrCode() {
     stopQrPoll();
 
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
         btnSyncQrCode.disabled = true;
         btnSyncQrCode.textContent = "Generating...";
         qrStatusText.textContent = "Requesting QR code...";
@@ -1217,8 +1240,9 @@ function startQrPoll() {
             if (result.status === "scanned" && result.token) {
                 // Login complete!
                 stopQrPoll();
-                inputSyncUserToken.value = result.token;
-                updateSyncUI(result.token);
+                // Reload config to get the saved token + QR code, then update UI
+                const config = await GetSyncConfig() as any;
+                updateSyncUI(config.syncToken, config.syncQrCode);
                 qrCodeDisplay.classList.add("hidden");
                 qrStatusText.textContent = "✅ Login successful! Token saved.";
                 showToast("WeChat login successful! ✅");
@@ -1228,7 +1252,7 @@ function startQrPoll() {
                 qrStatusText.textContent = "QR code expired. Click to generate a new one.";
             } else {
                 // Still pending
-                qrStatusText.textContent = `Waiting for scan... (scene: ${currentQrScene})`;
+                qrStatusText.textContent = `Waiting for scan...`;
             }
         } catch (err: any) {
             console.error("QR poll error:", err);
@@ -1247,7 +1271,7 @@ function stopQrPoll() {
 
 async function syncPush() {
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
         btnSyncPush.disabled = true;
         btnSyncPush.textContent = "Pushing...";
         const result = await PushToServer();
@@ -1262,7 +1286,7 @@ async function syncPush() {
 
 async function syncPull() {
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
         btnSyncPull.disabled = true;
         btnSyncPull.textContent = "Pulling...";
         const result = await PullFromServer();
@@ -1280,7 +1304,7 @@ async function syncPull() {
 
 async function saveSyncConfig() {
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
         showToast("Sync settings saved ✅");
     } catch (err: any) {
         showError("Save failed: " + String(err));
@@ -1293,19 +1317,7 @@ btnSyncQrCode.addEventListener("click", requestQrCode);
 btnSyncPush.addEventListener("click", syncPush);
 btnSyncPull.addEventListener("click", syncPull);
 btnSaveSyncConfig.addEventListener("click", saveSyncConfig);
-
-// Toggle token visibility
-if (btnToggleSyncToken) {
-    btnToggleSyncToken.addEventListener("click", () => {
-        if (inputSyncUserToken.type === "password") {
-            inputSyncUserToken.type = "text";
-            btnToggleSyncToken.textContent = "🙈";
-        } else {
-            inputSyncUserToken.type = "password";
-            btnToggleSyncToken.textContent = "👁️";
-        }
-    });
-}
+btnSyncUnlink.addEventListener("click", unlinkSync);
 
 // Load sync config when settings panel is shown
 const origShowSettings = showSettings;

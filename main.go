@@ -1868,6 +1868,7 @@ type SyncService struct {
 	history      *HistoryService
 	syncAddr     string // Remote sync server address, e.g. http://your-server:9274
 	syncToken    string // User Token (assigned by server via QR code login or legacy create)
+	syncQrCode   string // Cached QR code image (base64 data URL) from last successful login
 	autoSync     bool   // Whether auto-sync is enabled
 	lastSyncTime int64  // Unix timestamp of last successful sync (for incremental pull)
 }
@@ -1897,12 +1898,14 @@ func (s *SyncService) loadConfig() {
 	var cfg struct {
 		SyncAddr     string `json:"syncAddr"`
 		SyncToken    string `json:"syncToken"`
+		SyncQrCode   string `json:"syncQrCode"`
 		AutoSync     bool   `json:"autoSync"`
 		LastSyncTime int64  `json:"lastSyncTime"`
 	}
 	if json.Unmarshal(data, &cfg) == nil {
 		s.syncAddr = cfg.SyncAddr
 		s.syncToken = cfg.SyncToken
+		s.syncQrCode = cfg.SyncQrCode
 		s.autoSync = cfg.AutoSync
 		s.lastSyncTime = cfg.LastSyncTime
 	}
@@ -1913,6 +1916,7 @@ func (s *SyncService) saveConfig() error {
 	data, _ := json.MarshalIndent(map[string]interface{}{
 		"syncAddr":     s.syncAddr,
 		"syncToken":    s.syncToken,
+		"syncQrCode":   s.syncQrCode,
 		"autoSync":     s.autoSync,
 		"lastSyncTime": s.lastSyncTime,
 	}, "", "  ")
@@ -1928,15 +1932,29 @@ func (s *SyncService) GetSyncConfig() map[string]string {
 	return map[string]string{
 		"syncAddr":  s.syncAddr,
 		"syncToken": s.syncToken,
+		"syncQrCode": s.syncQrCode,
 		"autoSync":  autoSyncStr,
 	}
 }
 
-// SaveSyncConfig saves sync configuration
+// SaveSyncConfig saves sync configuration.
+// If syncToken is empty and a token is already stored, the existing token is preserved.
+// Pass a non-empty syncToken to update it, or call UnlinkSync to clear it.
 func (s *SyncService) SaveSyncConfig(syncAddr, syncToken string, autoSync bool) error {
 	s.syncAddr = syncAddr
-	s.syncToken = syncToken
+	if syncToken != "" {
+		s.syncToken = syncToken
+	} else if s.syncToken != "" {
+		// Preserve existing token when frontend passes empty (linked state)
+	}
 	s.autoSync = autoSync
+	return s.saveConfig()
+}
+
+// UnlinkSync clears the sync token and QR code, allowing re-linking to a new account.
+func (s *SyncService) UnlinkSync() error {
+	s.syncToken = ""
+	s.syncQrCode = ""
 	return s.saveConfig()
 }
 
@@ -2036,6 +2054,11 @@ func (s *SyncService) RequestQrCode() (map[string]interface{}, error) {
 	log.Printf("SyncService: QR code requested, scene=%v, expiresIn=%v",
 		result["scene"], result["expiresIn"])
 
+	// Cache the QR code image in memory so we can persist it on successful login
+	if qrcode, ok := result["qrcode"].(string); ok && qrcode != "" {
+		s.syncQrCode = qrcode
+	}
+
 	return result, nil
 }
 
@@ -2076,12 +2099,12 @@ func (s *SyncService) PollQrCodeStatus(scene string) (map[string]interface{}, er
 		return nil, fmt.Errorf("parse response failed: %v", err)
 	}
 
-	// Auto-save token if login is complete
+	// Auto-save token and QR code if login is complete
 	if status, ok := result["status"].(string); ok && status == "scanned" {
 		if token, ok := result["token"].(string); ok && token != "" {
 			s.syncToken = token
 			s.saveConfig()
-			log.Printf("SyncService: QR code login complete, token saved")
+			log.Printf("SyncService: QR code login complete, token and QR code saved")
 		}
 	}
 

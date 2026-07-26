@@ -110,13 +110,29 @@
 
             <!-- Sync Tab -->
             <div id="settings-tab-sync" class="settings-tab-page">
-                <div class="form-group">
+                <!-- Server address (hidden when linked) -->
+                <div id="sync-server-section" class="form-group">
                     <label for="sync-server-addr">Sync Server Address</label>
                     <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
                     <small class="form-hint">Your cloud-deployed WordFlow sync server. For local testing: http://127.0.0.1:9274</small>
                 </div>
 
-                <!-- QR Code Login Section -->
+                <!-- Linked state (shown when token exists) -->
+                <div id="sync-linked-section" class="form-group hidden">
+                    <label>✅ Sync Connected</label>
+                    <div class="sync-linked-card">
+                        <div class="sync-linked-qr">
+                            <img id="sync-linked-qr-image" class="qr-code-image" alt="Your linked QR code"/>
+                        </div>
+                        <div class="sync-linked-info">
+                            <div class="sync-linked-status">🟢 Linked to WeChat account</div>
+                            <div class="sync-linked-hint">Scan this QR code on another device to link it to the same account</div>
+                        </div>
+                        <button id="btn-sync-unlink" class="danger-btn" type="button" style="width:100%;margin-top:8px;">🔓 Unlink & Re-link</button>
+                    </div>
+                </div>
+
+                <!-- QR Code Login Section (hidden when linked) -->
                 <div id="sync-qr-section" class="form-group">
                     <label>🔐 WeChat QR Code Login</label>
                     <div class="qr-login-area">
@@ -130,15 +146,6 @@
                         </div>
                     </div>
                     <small class="form-hint">Scan the QR code with WeChat to log in. The mini program will open and authenticate automatically.</small>
-                </div>
-
-                <!-- Token display (shown after login) -->
-                <div id="sync-token-section" class="form-group hidden">
-                    <label>✅ Sync Connected</label>
-                    <div class="input-with-toggle">
-                        <input type="password" id="sync-user-token" readonly/>
-                        <button id="btn-toggle-sync-token" class="toggle-visibility" type="button" title="Show/Hide">👁️</button>
-                    </div>
                 </div>
 
                 <div class="form-group">
