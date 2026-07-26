@@ -83,7 +83,11 @@ class SyncClient {
         if (token != null) {
             req.header("Authorization", "Bearer $token")
         }
-        val resp = client.newCall(req.build()).execute()
+        val resp = try {
+            client.newCall(req.build()).execute()
+        } catch (e: IOException) {
+            throw IOException("Connection failed: ${e.message ?: e.javaClass.simpleName}")
+        }
         val body = resp.body?.string() ?: throw IOException("Empty response")
         if (!resp.isSuccessful) {
             if (resp.code == 401) throw AuthException("Token invalid or expired, please re-login")
@@ -103,7 +107,11 @@ class SyncClient {
         if (token != null) {
             req.header("Authorization", "Bearer $token")
         }
-        val resp = client.newCall(req.build()).execute()
+        val resp = try {
+            client.newCall(req.build()).execute()
+        } catch (e: IOException) {
+            throw IOException("Connection failed: ${e.message ?: e.javaClass.simpleName}")
+        }
         val respBody = resp.body?.string() ?: throw IOException("Empty response")
         if (!resp.isSuccessful) {
             if (resp.code == 401) throw AuthException("Token invalid or expired")

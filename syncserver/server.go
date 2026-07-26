@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/smtp"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,12 @@ type Server struct {
 	appID     string        // WeChat Mini Program AppID
 	appSecret string        // WeChat Mini Program AppSecret
 
+	// Email SMTP config
+	smtpHost     string // e.g. smtp.gmail.com
+	smtpPort     string // e.g. 587
+	smtpUser     string // sender email address
+	smtpPassword string // Gmail app password
+
 	// WeChat access_token cache
 	accessTokenMu    sync.RWMutex
 	accessToken      string
@@ -29,16 +36,20 @@ type Server struct {
 }
 
 // NewServer creates a new sync server
-func NewServer(store *Store, addr string, appID, appSecret string) *Server {
+func NewServer(store *Store, addr string, appID, appSecret string, smtpHost, smtpPort, smtpUser, smtpPassword string) *Server {
 	if addr == "" {
 		addr = ":9274" // Default port: "W"=9, "S"=7, "4"=4 → WordFlow Sync
 	}
 	return &Server{
-		store:     store,
-		addr:      addr,
-		tokenTTL:  0, // Tokens don't expire
-		appID:     appID,
-		appSecret: appSecret,
+		store:        store,
+		addr:         addr,
+		tokenTTL:     0, // Tokens don't expire
+		appID:        appID,
+		appSecret:    appSecret,
+		smtpHost:     smtpHost,
+		smtpPort:     smtpPort,
+		smtpUser:     smtpUser,
+		smtpPassword: smtpPassword,
 	}
 }
 
@@ -903,9 +914,13 @@ func (s *Server) handleEmailCodeRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Send the code via email (SMTP). For now, log it for development.
-	// In production, replace this with actual email sending.
-	log.Printf("AUTH  Email verification code for %s: %s", req.Email, code)
+	// Send the code via email
+	if s.smtpHost != "" && s.smtpUser != "" {
+		go s.sendEmailCode(req.Email, code)
+	} else {
+		// Fallback: log the code for development
+		log.Printf("AUTH  Email verification code for %s: %s (SMTP not configured)", req.Email, code)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Verification code sent to your email",
@@ -1003,4 +1018,29 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// sendEmailCode sends a verification code email via SMTP.
+func (s *Server) sendEmailCode(toEmail, code string) {
+	from := s.smtpUser
+	subject := "WordFlow Verification Code"
+	body := fmt.Sprintf(
+		"Your WordFlow verification code is: %s\n\nThis code expires in 10 minutes.\nIf you did not request this, please ignore this email.\n",
+		code,
+	)
+
+	msg := fmt.Sprintf(
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		from, toEmail, subject, body,
+	)
+
+	addr := s.smtpHost + ":" + s.smtpPort
+	auth := smtp.PlainAuth("", s.smtpUser, s.smtpPassword, s.smtpHost)
+
+	err := smtp.SendMail(addr, auth, from, []string{toEmail}, []byte(msg))
+	if err != nil {
+		log.Printf("AUTH  Failed to send email to %s: %v", toEmail, err)
+	} else {
+		log.Printf("AUTH  Verification code email sent to %s", toEmail)
+	}
 }

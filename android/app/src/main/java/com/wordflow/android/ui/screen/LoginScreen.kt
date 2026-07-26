@@ -15,7 +15,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wordflow.android.WordFlowApp
 import com.wordflow.android.data.SyncClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class LoginViewModel : ViewModel() {
     var email by mutableStateOf("")
@@ -36,11 +38,11 @@ class LoginViewModel : ViewModel() {
         status = "Sending code..."
         viewModelScope.launch {
             try {
-                val msg = client.requestEmailCode(app.store.serverAddr, email.trim())
+                val msg = withContext(Dispatchers.IO) { client.requestEmailCode(app.store.serverAddr, email.trim()) }
                 codeSent = true
                 status = msg.ifBlank { "Verification code sent to your email" }
             } catch (e: Exception) {
-                status = "Failed: ${e.message}"
+                status = "Failed: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 busy = false
             }
@@ -56,7 +58,7 @@ class LoginViewModel : ViewModel() {
         status = "Verifying..."
         viewModelScope.launch {
             try {
-                val result = client.verifyEmailCode(app.store.serverAddr, email.trim(), code.trim())
+                val result = withContext(Dispatchers.IO) { client.verifyEmailCode(app.store.serverAddr, email.trim(), code.trim()) }
                 if (result.token.isNotBlank()) {
                     app.store.token = result.token
                     app.store.userEmail = email.trim()
@@ -66,7 +68,7 @@ class LoginViewModel : ViewModel() {
                     status = result.message.ifBlank { "Verification failed" }
                 }
             } catch (e: Exception) {
-                status = "Failed: ${e.message}"
+                status = "Failed: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 busy = false
             }

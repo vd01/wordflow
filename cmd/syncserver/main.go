@@ -23,6 +23,19 @@ func main() {
 	appID := os.Getenv("WECHAT_APP_ID")
 	appSecret := os.Getenv("WECHAT_APP_SECRET")
 
+	// Email SMTP credentials (from environment variables)
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpUser := os.Getenv("SMTP_USER")
+	smtpPassword := os.Getenv("SMTP_PASSWORD")
+
+	if smtpHost == "" {
+		smtpHost = "smtp.gmail.com"
+	}
+	if smtpPort == "" {
+		smtpPort = "587"
+	}
+
 	// Default database path
 	if *dbPath == "" {
 		configDir, err := os.UserConfigDir()
@@ -44,6 +57,11 @@ func main() {
 	} else {
 		fmt.Printf("  WeChat:   (not configured, set WECHAT_APP_ID + WECHAT_APP_SECRET)\n")
 	}
+	if smtpUser != "" {
+		fmt.Printf("  Email:    %s via %s:%s\n", smtpUser, smtpHost, smtpPort)
+	} else {
+		fmt.Printf("  Email:    (not configured, set SMTP_USER + SMTP_PASSWORD)\n")
+	}
 	fmt.Println()
 
 	// Open store
@@ -64,7 +82,7 @@ func main() {
 	}
 
 	// Start server
-	srv := syncserver.NewServer(store, *addr, appID, appSecret)
+	srv := syncserver.NewServer(store, *addr, appID, appSecret, smtpHost, smtpPort, smtpUser, smtpPassword)
 
 	go func() {
 		if err := srv.Start(); err != nil {

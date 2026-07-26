@@ -14,7 +14,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wordflow.android.WordFlowApp
 import com.wordflow.android.data.FsrsEngine
 import com.wordflow.android.data.SyncClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HomeViewModel : ViewModel() {
     var wordCount by mutableStateOf(0)
@@ -52,7 +54,7 @@ class HomeViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val effectiveSince = since ?: store.lastSync
-                val res = client.pull(store.serverAddr, store.token, effectiveSince)
+                val res = withContext(Dispatchers.IO) { client.pull(store.serverAddr, store.token, effectiveSince) }
                 val r = store.mergePulled(res.entries, res.serverNow, effectiveSince == 0L)
                 refresh(app)
                 status = "Synced ${r.changed} entries, local total: ${r.total}"
@@ -70,12 +72,12 @@ class HomeViewModel : ViewModel() {
         status = "Testing..."
         viewModelScope.launch {
             try {
-                val h = client.health(store.serverAddr)
+                val h = withContext(Dispatchers.IO) { client.health(store.serverAddr) }
                 var s = "Connected: ${h.service} v${h.version}"
                 if (h.email) s += " (Email auth enabled)"
                 if (store.isLoggedIn) {
                     try {
-                        val st = client.getStatus(store.serverAddr, store.token)
+                        val st = withContext(Dispatchers.IO) { client.getStatus(store.serverAddr, store.token) }
                         s += " | Remote words: ${st.wordCount}"
                     } catch (_: Exception) {
                         s += " | Token invalid"
