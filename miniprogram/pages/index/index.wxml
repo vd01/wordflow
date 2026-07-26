@@ -30,8 +30,24 @@
   </view>
 
   <view class="card">
-    <view class="muted">Daily new word limit (0 = unlimited)</view>
-    <input class="input" type="number" value="{{dailyLimit}}" bindinput="onDailyLimit" placeholder="0 = unlimited" />
+    <view class="limit-header">
+      <text class="limit-label">Daily new word limit</text>
+      <text class="limit-value" wx:if="{{dailyLimit > 0}}">{{dailyLimit}}</text>
+      <text class="limit-value limit-unlimited" wx:else>∞</text>
+    </view>
+    <view class="limit-presets">
+      <view class="preset-btn {{dailyLimit === 0 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="0">∞ Off</view>
+      <view class="preset-btn {{dailyLimit === 5 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="5">5</view>
+      <view class="preset-btn {{dailyLimit === 10 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="10">10</view>
+      <view class="preset-btn {{dailyLimit === 20 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="20">20</view>
+      <view class="preset-btn {{dailyLimit === 30 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="30">30</view>
+      <view class="preset-btn {{dailyLimit === 50 ? 'active' : ''}}" bindtap="setDailyLimit" data-value="50">50</view>
+    </view>
+    <view class="limit-stepper">
+      <view class="stepper-btn" bindtap="decrementLimit">−</view>
+      <text class="stepper-value">{{dailyLimit > 0 ? dailyLimit : '∞'}}</text>
+      <view class="stepper-btn" bindtap="incrementLimit">+</view>
+    </view>
     <view class="muted" style="margin-top:8rpx">Today's new words: {{dailyNewCount}}{{dailyLimit > 0 ? ' / ' + dailyLimit : ''}}</view>
   </view>
 

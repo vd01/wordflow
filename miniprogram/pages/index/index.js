@@ -109,6 +109,24 @@ Page({
     store.setDailyLimit(n)
   },
 
+  setDailyLimit(e) {
+    const n = parseInt(e.currentTarget.dataset.value, 10)
+    this.setData({ dailyLimit: n })
+    store.setDailyLimit(n)
+  },
+
+  incrementLimit() {
+    const n = this.data.dailyLimit + 5
+    this.setData({ dailyLimit: n })
+    store.setDailyLimit(n)
+  },
+
+  decrementLimit() {
+    const n = Math.max(0, this.data.dailyLimit - 5)
+    this.setData({ dailyLimit: n })
+    store.setDailyLimit(n)
+  },
+
   // Handle login when user scans QR code and mini program opens with scene
   async handleSceneLogin(scene) {
     this.setData({ loginBusy: true, status: 'Logging in via WeChat...', pairingCode: scene })
