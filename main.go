@@ -42,6 +42,7 @@ func main() {
 
 	// Wire up: HistoryService notifies SyncService on new entries
 	historySvc.syncCb = syncSvc.OnEntryAdded
+	historySvc.syncBulkCb = syncSvc.OnEntriesDeleted
 
 	app := application.New(application.Options{
 		Name:        "WordFlow",
@@ -1645,10 +1646,11 @@ type HistoryEntry struct {
 // It replaces the old JSON-file-based history with proper database storage,
 // enabling reliable persistence and sync support.
 type HistoryService struct {
-	db     *sql.DB
-	mu     sync.RWMutex
-	once   sync.Once
-	syncCb func(entry HistoryEntry) // callback to notify sync service
+	db        *sql.DB
+	mu        sync.RWMutex
+	once      sync.Once
+	syncCb    func(entry HistoryEntry)  // callback to notify sync service (single entry)
+	syncBulkCb func(entries []HistoryEntry) // callback for bulk deletions (e.g. ClearHistory)
 }
 
 func (h *HistoryService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
@@ -1938,14 +1940,45 @@ func (h *HistoryService) SoftDeleteFromSync(id string) error {
 // ClearHistory removes all entries
 func (h *HistoryService) ClearHistory() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	if h.db == nil {
+		h.mu.Unlock()
 		return fmt.Errorf("数据库未初始化")
 	}
 
-	_, err := h.db.Exec("DELETE FROM history")
-	return err
+	now := time.Now().Unix()
+
+	// Collect entries for sync notification before soft-deleting
+	var entries []HistoryEntry
+	if h.syncBulkCb != nil {
+		rows, err := h.db.Query("SELECT id, word, result, created_at, updated_at FROM history WHERE deleted = 0")
+		if err == nil {
+			for rows.Next() {
+				var e HistoryEntry
+				if rows.Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt) == nil {
+					e.Deleted = true
+					e.UpdatedAt = now
+					entries = append(entries, e)
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	// Soft-delete all entries (not hard DELETE) so deletions can sync
+	_, err := h.db.Exec("UPDATE history SET deleted = 1, updated_at = ? WHERE deleted = 0", now)
+	h.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+
+	// Notify sync service with bulk callback (single batch push)
+	if h.syncBulkCb != nil && len(entries) > 0 {
+		h.syncBulkCb(entries)
+	}
+
+	return nil
 }
 
 // GetHistoryEntry returns a single entry by ID
@@ -2488,6 +2521,15 @@ func (s *SyncService) OnEntryAdded(entry HistoryEntry) {
 	go s.pushEntryAsync(entry)
 }
 
+// OnEntriesDeleted is called by HistoryService when multiple entries are bulk-deleted
+// (e.g. ClearHistory). Pushes all deletions in a single batch request.
+func (s *SyncService) OnEntriesDeleted(entries []HistoryEntry) {
+	if !s.autoSync || s.syncAddr == "" || s.syncToken == "" || len(entries) == 0 {
+		return
+	}
+	go s.pushEntriesAsync(entries)
+}
+
 // pushEntryAsync pushes a single entry to the server in the background.
 // Handles both new/updated entries and deletions (entry.Deleted = true).
 func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
@@ -2538,6 +2580,57 @@ func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 	} else {
 		log.Printf("SyncService: auto-pushed '%s' to server", entry.Word)
 	}
+}
+
+// pushEntriesAsync pushes multiple entries to the server in a single batch request.
+// Used for bulk operations like ClearHistory.
+func (s *SyncService) pushEntriesAsync(entries []HistoryEntry) {
+	syncEntries := make([]syncserver.SyncEntry, len(entries))
+	for i, e := range entries {
+		syncEntries[i] = syncserver.SyncEntry{
+			ID:        e.ID,
+			Word:      e.Word,
+			Result:    e.Result,
+			CreatedAt: e.CreatedAt,
+			UpdatedAt: e.UpdatedAt,
+			Deleted:   e.Deleted,
+		}
+	}
+
+	reqBody := syncserver.SyncPushRequest{Entries: syncEntries}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		log.Printf("SyncService: batch-push marshal error: %v", err)
+		return
+	}
+
+	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/sync/push"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
+	if err != nil {
+		log.Printf("SyncService: batch-push request error: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.syncToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("SyncService: batch-push failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		log.Printf("SyncService: batch-push token invalid")
+		return
+	}
+	if resp.StatusCode != 200 {
+		log.Printf("SyncService: batch-push server error: HTTP %d", resp.StatusCode)
+		return
+	}
+
+	log.Printf("SyncService: batch-pushed %d deletions to server", len(entries))
 }
 
 // ============================================================
