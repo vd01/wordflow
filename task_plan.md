@@ -1,7 +1,7 @@
-# Task Plan: WordWise WeChat Mini Program (FSRS flashcards via SyncServer)
+# Task Plan: WordFlow WeChat Mini Program (FSRS flashcards via SyncServer)
 
 ## Goal
-Build a WeChat Mini Program (in `miniprogram/`) that pulls word/content data from the existing WordWise SyncServer and implements Anki-like spaced-repetition review using the FSRS algorithm, with automated E2E tests (miniprogram-automator + jest) and automated preview/upload (miniprogram-ci).
+Build a WeChat Mini Program (in `miniprogram/`) that pulls word/content data from the existing WordFlow SyncServer and implements Anki-like spaced-repetition review using the FSRS algorithm, with automated E2E tests (miniprogram-automator + jest) and automated preview/upload (miniprogram-ci).
 
 ## Current Phase
 All phases complete. Remaining: real-device test + production TLS setup (user action).

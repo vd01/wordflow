@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "wordwise.exe"
+name: "wordflow.exe"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A wordwise application"
+description: "A wordflow application"
 vendor: "My Company"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/wordwise.exe"
-    dst: "/usr/local/bin/wordwise.exe"
+  - src: "./bin/wordflow.exe"
+    dst: "/usr/local/bin/wordflow.exe"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/wordwise.exe.png"
-  - src: "./build/linux/wordwise.exe.desktop"
-    dst: "/usr/share/applications/wordwise.exe.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/wordflow.exe.png"
+  - src: "./build/linux/wordflow.exe.desktop"
+    dst: "/usr/share/applications/wordflow.exe.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

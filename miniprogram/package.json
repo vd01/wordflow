@@ -1,8 +1,8 @@
 {
-  "name": "wordwise-miniprogram",
+  "name": "wordflow-miniprogram",
   "version": "0.1.0",
   "private": true,
-  "description": "WeChat Mini Program for WordWise — FSRS-based spaced repetition using SyncServer words",
+  "description": "WeChat Mini Program for WordFlow — FSRS-based spaced repetition using SyncServer words",
   "scripts": {
     "test": "jest",
     "test:unit": "jest --testPathIgnorePatterns=e2e",

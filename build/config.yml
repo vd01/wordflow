@@ -5,11 +5,11 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  productName: "WordWise"
-  productIdentifier: "com.wordwise.app"
+  productName: "WordFlow"
+  productIdentifier: "com.wordflow.app"
   description: "英语词典助手 - 系统托盘 + 全局快捷键 + LLM智能查词"
-  copyright: "(c) 2025, WordWise"
-  comments: "WordWise Dictionary Assistant"
+  copyright: "(c) 2025, WordFlow"
+  comments: "WordFlow Dictionary Assistant"
   version: "1.0.0"
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension

@@ -45,11 +45,11 @@ describe('sync — authHeader', () => {
 
 describe('sync — health', () => {
   test('calls GET /api/v1/health', async () => {
-    mockResponse.data = { status: 'ok', service: 'wordwise-sync', version: '1.0' }
+    mockResponse.data = { status: 'ok', service: 'wordflow-sync', version: '1.0' }
     const result = await sync.health('http://localhost:9274')
     expect(mockRequestOptions.url).toBe('http://localhost:9274/api/v1/health')
     expect(mockRequestOptions.method).toBe('GET')
-    expect(result.service).toBe('wordwise-sync')
+    expect(result.service).toBe('wordflow-sync')
   })
 })
 

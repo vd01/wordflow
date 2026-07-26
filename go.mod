@@ -1,4 +1,4 @@
-module wordwise
+module wordflow
 
 go 1.25.0
 

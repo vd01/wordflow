@@ -13,7 +13,7 @@ const path = require('path')
 // Config — update these
 const APPID = 'wxcf0e31a667b6fe79'
 const VERSION = '0.1.0'
-const DESC = 'WordWise Mini Program — FSRS flashcards'
+const DESC = 'WordFlow Mini Program — FSRS flashcards'
 const PROJECT_PATH = path.resolve(__dirname, '..')
 const PRIVATE_KEY_PATH = path.resolve(__dirname, 'private.key')
 

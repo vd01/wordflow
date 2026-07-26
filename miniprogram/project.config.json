@@ -1,9 +1,9 @@
 {
-  "description": "WordWise Mini Program — FSRS flashcards via SyncServer",
+  "description": "WordFlow Mini Program — FSRS flashcards via SyncServer",
   "miniprogramRoot": "./",
   "compileType": "miniprogram",
   "appid": "wxcf0e31a667b6fe79",
-  "projectname": "wordwise-miniprogram",
+  "projectname": "wordflow-miniprogram",
   "setting": {
     "urlCheck": false,
     "es6": true,

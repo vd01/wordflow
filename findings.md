@@ -1,10 +1,10 @@
-# Findings: WordWise Mini Program
+# Findings: WordFlow Mini Program
 
-## Repo structure (E:/go-wails-wordwise)
-- Go + Wails v3 desktop app ("wordwise"). `main.go`, `frontend/` (Vite+TS desktop UI), `go.mod` (module `wordwise`, go 1.25).
+## Repo structure (E:/go-wails-wordflow)
+- Go + Wails v3 desktop app ("wordflow"). `main.go`, `frontend/` (Vite+TS desktop UI), `go.mod` (module `wordflow`, go 1.25).
 - `syncserver/` — standalone HTTP sync server (Go, SQLite via modernc.org/sqlite).
-- `cmd/syncserver/main.go` — server entrypoint binary. Default port **9274**, default DB `~/.../WordWise/sync.db`.
-- `frontend/bindings/wordwise/*.ts` — auto-generated Wails bindings (dictservice, ecdictservice, historyservice, syncservice, models).
+- `cmd/syncserver/main.go` — server entrypoint binary. Default port **9274**, default DB `~/.../WordFlow/sync.db`.
+- `frontend/bindings/wordflow/*.ts` — auto-generated Wails bindings (dictservice, ecdictservice, historyservice, syncservice, models).
 - Build tooling: `Taskfile.yml` (go-task), `wails3 dev/build`. Server mode: `task build:server` / `run:server`.
 - `.gitignore` ignores `.task`, `frontend/dist`, `frontend/node_modules`. **Note:** does NOT ignore `miniprogram/node_modules` — add later.
 

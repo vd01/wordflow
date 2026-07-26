@@ -1,4 +1,4 @@
-// SyncServer HTTP client — mirrors the WordWise syncserver API.
+// SyncServer HTTP client — mirrors the WordFlow syncserver API.
 // Auth: token via Authorization: Bearer <token>.
 // NOTE: production requires https + a whitelisted domain (TLS reverse proxy -> :9274).
 // In dev, project.config.json sets setting.urlCheck=false to allow http.

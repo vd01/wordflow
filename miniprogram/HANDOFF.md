@@ -1,8 +1,8 @@
-# WordWise Mini Program — Handoff Documentation
+# WordFlow Mini Program — Handoff Documentation
 
 ## Overview
 
-A WeChat Mini Program that pulls word data from the WordWise SyncServer and implements Anki-like spaced-repetition review using the FSRS-6 algorithm.
+A WeChat Mini Program that pulls word data from the WordFlow SyncServer and implements Anki-like spaced-repetition review using the FSRS-6 algorithm.
 
 **AppID:** `wxcf0e31a667b6fe79`
 

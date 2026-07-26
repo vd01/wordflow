@@ -26,7 +26,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"wordwise/syncserver"
+	"wordflow/syncserver"
 )
 
 //go:embed all:frontend/dist
@@ -44,8 +44,8 @@ func main() {
 	historySvc.syncCb = syncSvc.OnEntryAdded
 
 	app := application.New(application.Options{
-		Name:        "WordWise",
-		Description: "英语词典助手 - 系统托盘 + 全局快捷键 + ECDICT离线词典 + LLM智能查词 + 多设备同步",
+		Name:        "WordFlow",
+		Description: "查词温故 - 系统托盘 + 全局快捷键 + ECDICT离线词典 + LLM智能查词 + 多设备同步",
 		Services: []application.Service{
 			application.NewService(&DictService{ecdict: ecdictSvc, history: historySvc}),
 			application.NewService(ecdictSvc),
@@ -59,7 +59,7 @@ func main() {
 		// (which would otherwise create a duplicate system-tray icon).
 		// On a second launch attempt we just surface the existing window.
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.wordwise.app",
+			UniqueID: "com.wordflow.app",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if w, ok := application.Get().Window.Get("main-window"); ok {
 					w.Show()
@@ -72,7 +72,7 @@ func main() {
 	// ---- System Tray ----
 	tray := app.SystemTray.New()
 	tray.SetIcon(icon)
-	tray.SetTooltip("WordWise - 英语词典助手 (Ctrl+Alt+Q 呼出)")
+	tray.SetTooltip("WordFlow - 查词温故 (Ctrl+Alt+Q 呼出)")
 
 	trayMenu := app.NewMenu()
 	trayMenu.Add("显示窗口").OnClick(func(ctx *application.Context) {
@@ -103,7 +103,7 @@ func main() {
 	// ---- Main Window ----
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main-window",
-		Title:            "WordWise - 英语词典助手",
+		Title:            "WordFlow - 查词温故",
 		Width:            600,
 		Height:           820,
 		MinWidth:         460,
@@ -676,7 +676,7 @@ const definitionsSchemaBlock = `  "definitions": [
 // defaultPromptConfig returns the built-in default prompt configuration.
 func defaultPromptConfig() *PromptConfig {
 	return &PromptConfig{
-		SystemPrompt:      "你是一个专业的英语词典助手，总是以纯JSON格式回复，不包含markdown标记。用户会给你一个英语单词或短语，你必须解释它。",
+		SystemPrompt:      "你是一个专业的查词温故，总是以纯JSON格式回复，不包含markdown标记。用户会给你一个英语单词或短语，你必须解释它。",
 		ExtraRequirements: "",
 		Temperature:       0.3,
 		MaxTokens:         2000,
@@ -1287,7 +1287,7 @@ func enableAutoStart() error {
 	// Use reg.exe to add the registry entry (no CGo needed)
 	cmd := exec.Command("reg", "add",
 		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-		"/v", "WordWise",
+		"/v", "WordFlow",
 		"/t", "REG_SZ",
 		"/d", `"`+exePath+`"`,
 		"/f",
@@ -1304,7 +1304,7 @@ func enableAutoStart() error {
 func disableAutoStart() error {
 	cmd := exec.Command("reg", "delete",
 		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-		"/v", "WordWise",
+		"/v", "WordFlow",
 		"/f",
 	)
 	output, err := cmd.CombinedOutput()
@@ -1315,11 +1315,11 @@ func disableAutoStart() error {
 	return nil
 }
 
-// checkAutoStartRegistry checks if the Run key exists for WordWise.
+// checkAutoStartRegistry checks if the Run key exists for WordFlow.
 func checkAutoStartRegistry() bool {
 	cmd := exec.Command("reg", "query",
 		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-		"/v", "WordWise",
+		"/v", "WordFlow",
 	)
 	err := cmd.Run()
 	return err == nil

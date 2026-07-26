@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>WordWise</title>
+    <title>WordFlow</title>
     <link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
@@ -12,7 +12,7 @@
     <header class="app-header">
         <div class="header-left">
             <span class="app-logo">📖</span>
-            <h1 class="app-title">WordWise</h1>
+            <h1 class="app-title">WordFlow</h1>
         </div>
         <div class="header-right">
             <button id="btn-history" class="icon-btn" title="查询历史">📋</button>
@@ -113,7 +113,7 @@
                 <div class="form-group">
                     <label for="sync-server-addr">Sync Server Address</label>
                     <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
-                    <small class="form-hint">Your cloud-deployed WordWise sync server. For local testing: http://127.0.0.1:9274</small>
+                    <small class="form-hint">Your cloud-deployed WordFlow sync server. For local testing: http://127.0.0.1:9274</small>
                 </div>
 
                 <!-- QR Code Login Section -->
@@ -176,13 +176,13 @@
                 <div class="form-group">
                     <label>🚀 Auto-start on System Boot</label>
                     <div class="toggle-row">
-                        <span class="toggle-label">Launch WordWise when Windows starts</span>
+                        <span class="toggle-label">Launch WordFlow when Windows starts</span>
                         <label class="toggle-switch">
                             <input type="checkbox" id="auto-start-toggle"/>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
-                    <small class="form-hint">Adds WordWise to Windows startup registry (HKCU\...\Run)</small>
+                    <small class="form-hint">Adds WordFlow to Windows startup registry (HKCU\...\Run)</small>
                 </div>
             </div>
             <div id="settings-tab-debug" class="settings-tab-page">

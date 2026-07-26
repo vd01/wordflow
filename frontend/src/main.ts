@@ -1,8 +1,8 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordwise/dictservice.js";
-import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordwise/ecdictservice.js";
-import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordwise/historyservice.js";
-import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus } from "../bindings/wordwise/syncservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
+import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
+import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
+import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus } from "../bindings/wordflow/syncservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -91,7 +91,7 @@ GetPromptConfig().then(json => {
     if (!promptConfig) promptConfig = defaultPromptConfig();
 }).catch(err => {
     promptConfig = defaultPromptConfig();
-    console.error("[WordWise] Failed to load prompt config:", err);
+    console.error("[WordFlow] Failed to load prompt config:", err);
 });
 
 // ============================================================
@@ -139,9 +139,9 @@ let ecdictAvailable = false;
 EcdictIsAvailable().then(available => {
     ecdictAvailable = available;
     if (available) {
-        console.log("[WordWise] ECDICT offline dictionary is available");
+        console.log("[WordFlow] ECDICT offline dictionary is available");
     } else {
-        console.log("[WordWise] ECDICT offline dictionary not found - run import first");
+        console.log("[WordFlow] ECDICT offline dictionary not found - run import first");
     }
 }).catch(console.error);
 
@@ -263,7 +263,7 @@ async function doSearch(word: string) {
                 resultEl.classList.remove("hidden");
                 resultEl.scrollTop = 0;
             } catch (e) {
-                console.error("[WordWise] Failed to parse ECDICT result:", e);
+                console.error("[WordFlow] Failed to parse ECDICT result:", e);
             }
         }
 

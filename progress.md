@@ -1,4 +1,4 @@
-# Progress Log: WordWise Mini Program
+# Progress Log: WordFlow Mini Program
 
 ## Session 1 — <today>
 - Read pi-planning-with-files SKILL.md; adopted file-based planning.

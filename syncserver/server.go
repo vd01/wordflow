@@ -31,7 +31,7 @@ type Server struct {
 // NewServer creates a new sync server
 func NewServer(store *Store, addr string, appID, appSecret string) *Server {
 	if addr == "" {
-		addr = ":9274" // Default port: "W"=9, "S"=7, "4"=4 → WordWise Sync
+		addr = ":9274" // Default port: "W"=9, "S"=7, "4"=4 → WordFlow Sync
 	}
 	return &Server{
 		store:     store,
@@ -72,7 +72,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("WordWise sync server started on %s", s.addr)
+	log.Printf("WordFlow sync server started on %s", s.addr)
 	log.Printf("API endpoints:")
 	log.Printf("  POST /api/v1/user/create         - Create new user (legacy, get token)")
 	log.Printf("  POST /api/v1/auth/qrcode/request  - Request QR code login (get scene)")
@@ -845,7 +845,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
-		"service": "wordwise-sync",
+		"service": "wordflow-sync",
 		"version": "1.1.0",
 		"time":    time.Now().Unix(),
 		"wechat":  s.appID != "",

@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"wordwise/syncserver"
+	"wordflow/syncserver"
 )
 
 func main() {
@@ -29,11 +29,11 @@ func main() {
 		if err != nil {
 			configDir = "."
 		}
-		*dbPath = filepath.Join(configDir, "WordWise", "sync.db")
+		*dbPath = filepath.Join(configDir, "WordFlow", "sync.db")
 	}
 
 	fmt.Println("╔══════════════════════════════════════════╗")
-	fmt.Println("║     WordWise Sync Server v1.1.0          ║")
+	fmt.Println("║     WordFlow Sync Server v1.1.0          ║")
 	fmt.Println("║     English Dictionary - Multi-device    ║")
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()

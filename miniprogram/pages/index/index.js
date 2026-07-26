@@ -156,7 +156,7 @@ Page({
     const serverAddr = app.globalData.serverAddr
     try {
       const h = await sync.health(serverAddr)
-      let status = 'Connected: ' + (h.service || 'wordwise-sync') + ' v' + (h.version || '?')
+      let status = 'Connected: ' + (h.service || 'wordflow-sync') + ' v' + (h.version || '?')
       if (h.wechat) {
         status += ' (WeChat auth enabled)'
       }

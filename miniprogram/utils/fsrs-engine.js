@@ -1,4 +1,4 @@
-// FSRS engine wrapper for WordWise Mini Program.
+// FSRS engine wrapper for WordFlow Mini Program.
 // Vendors ts-fsrs (CJS bundle) and provides a simple API:
 //   - createCard(id) → new FSRS card for a word
 //   - rateCard(card, rating) → updated { card, log }
