@@ -235,16 +235,37 @@ async function doSearch(word: string) {
             } catch {
                 mergedData = { word, _rawCache: cachedResult };
             }
-            loadingEl.classList.add("hidden");
-            resultEl.innerHTML = renderWordResult(mergedData, false);
-            resultEl.classList.remove("hidden");
-            resultEl.scrollTop = 0;
-            isSearching = false;
-            return;
+
+            // If the cached result has no LLM data but LLM is now configured,
+            // bypass the cache and re-search to get LLM enrichment.
+            const llmNowConfigured = inputApiKey.value && inputApiUrl.value && inputModelName.value;
+            const cachedHasLLM = mergedData._sources && Array.isArray(mergedData._sources) && mergedData._sources.includes('LLM');
+            if (llmNowConfigured && !cachedHasLLM) {
+                console.log(`[LLM-DEBUG] Cache HIT but no LLM data — LLM now configured, re-searching with enrichment`);
+                // Fall through to Phase 1+2 below, don't use the cached result
+            } else {
+                loadingEl.classList.add("hidden");
+                resultEl.innerHTML = renderWordResult(mergedData, false);
+                resultEl.classList.remove("hidden");
+                resultEl.scrollTop = 0;
+                isSearching = false;
+                return;
+            }
         }
 
         console.log(`[LLM-DEBUG] Cache MISS in ${cacheDuration.toFixed(0)}ms, proceeding to ECDICT+LLM`);
         // ── Phase 1: ECDICT fast lookup (~10ms) ──
+        // Skip if we already have ECDICT data from a cache bypass above
+        const cachedHasEcdict = mergedData._sources && Array.isArray(mergedData._sources) && mergedData._sources.includes('ECDICT');
+        if (cachedHasEcdict) {
+            ecdictData = mergedData;
+            console.log(`[LLM-DEBUG] === Phase 1: SKIPPED (ECDICT data from cache bypass) ===`);
+            // Show existing result with loading indicator
+            loadingEl.classList.add("hidden");
+            resultEl.innerHTML = renderWordResult(mergedData, true);
+            resultEl.classList.remove("hidden");
+            resultEl.scrollTop = 0;
+        } else {
         const ecdictStartTime = performance.now();
         console.log(`[LLM-DEBUG] === Phase 1: Starting ECDICT lookup for "${word}" ===`);
         const ecdictResult = await LookupWordFast(word);
@@ -266,6 +287,7 @@ async function doSearch(word: string) {
                 console.error("[WordFlow] Failed to parse ECDICT result:", e);
             }
         }
+        } // end of ECDICT phase
 
         // ── Phase 2: LLM enrichment (slow, ~2-10s) ──
         // Skip silently if LLM is not configured (no API key/URL/model)
