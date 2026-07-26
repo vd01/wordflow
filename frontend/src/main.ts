@@ -268,6 +268,16 @@ async function doSearch(word: string) {
         }
 
         // ── Phase 2: LLM enrichment (slow, ~2-10s) ──
+        // Skip silently if LLM is not configured (no API key/URL/model)
+        const llmNotConfigured = !inputApiKey.value || !inputApiUrl.value || !inputModelName.value;
+        if (llmNotConfigured) {
+            console.log(`[LLM-DEBUG] === Phase 2: SKIPPED (LLM not configured) ===`);
+            if (ecdictData) {
+                // ECDICT data is sufficient — just add a subtle hint
+                mergedData._llmHint = "Configure LLM in settings for richer definitions with examples, memory tips, etc.";
+            }
+            // Skip to final render
+        } else {
         const llmStartTime = performance.now();
         console.log(`[LLM-DEBUG] === Phase 2: Starting LLM lookup for "${word}" ===`);
         try {
@@ -336,18 +346,23 @@ async function doSearch(word: string) {
             // Show ECDICT result with a subtle note
             mergedData._llmError = String(err);
         }
+        } // end of LLM else block
 
         // ── Final render ──
         loadingEl.classList.add("hidden");
 
         if (!ecdictData && !llmData) {
             // Neither source found the word
+            const notConfigured = !inputApiKey.value || !inputApiUrl.value || !inputModelName.value;
+            const hint = notConfigured
+                ? "LLM is not configured. Set up API Key, API URL, and Model Name in settings to enable word lookup."
+                : "Word not found. Please check spelling.";
             resultEl.innerHTML = `<div class="result-card">
                 <div class="word-header">
                     <span class="word-text">${escapeHtml(word)}</span>
                 </div>
                 <div class="section-content" style="color:var(--text-muted);margin-top:8px;">
-                    未找到该单词的释义。请检查拼写是否正确。
+                    ${hint}
                 </div>
             </div>`;
             resultEl.classList.remove("hidden");
@@ -611,6 +626,11 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
     // ── LLM error note ──
     if (data._llmError) {
         html += `<div class="llm-error-note">⚠️ LLM增强查询失败: ${escapeHtml(data._llmError)}</div>`;
+    }
+
+    // ── LLM setup hint (shown when LLM is not configured) ──
+    if (data._llmHint) {
+        html += `<div class="llm-hint-note">💡 ${escapeHtml(data._llmHint)}</div>`;
     }
 
     // ── Loading more indicator ──

@@ -759,6 +759,11 @@ func mergePromptConfig(saved *PromptConfig) *PromptConfig {
 // DictService - ECDICT fast lookup + LLM enrichment
 // ============================================================
 
+// ErrLLMNotConfigured is returned when LLM lookup is attempted but
+// apiKey, apiURL, or modelName is not set. The frontend uses this
+// to skip Phase 2 gracefully and show a setup hint instead of an error.
+var ErrLLMNotConfigured = fmt.Errorf("LLM not configured: please set API Key, API URL, and Model Name in settings")
+
 type DictService struct {
 	app          *application.App
 	apiKey       string
@@ -808,12 +813,6 @@ func (d *DictService) ServiceStartup(ctx context.Context, options application.Se
 				d.autoStart, _ = strconv.ParseBool(v)
 			}
 		}
-	}
-	if d.apiURL == "" {
-		d.apiURL = "https://api.openai.com/v1/chat/completions"
-	}
-	if d.modelName == "" {
-		d.modelName = "gpt-4o-mini"
 	}
 	if d.shortcutKey == "" {
 		d.shortcutKey = "Ctrl+Alt+Q"
@@ -930,8 +929,10 @@ func (d *DictService) lookupWordLLMInternal(word string, includeEcdict bool) (st
 	if !d.ready {
 		return "", fmt.Errorf("服务正在初始化，请稍后重试")
 	}
-	if d.apiKey == "" {
-		return "", fmt.Errorf("请先设置 API Key（点击 ⚙️ 设置按钮）")
+	// Check LLM configuration — return a specific error so the frontend
+	// can distinguish "not configured" from "call failed".
+	if d.apiKey == "" || d.apiURL == "" || d.modelName == "" {
+		return "", ErrLLMNotConfigured
 	}
 	word = strings.TrimSpace(word)
 	if word == "" {
