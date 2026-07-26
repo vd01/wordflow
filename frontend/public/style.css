@@ -299,6 +299,29 @@ body {
     color: var(--text-muted);
 }
 
+.speak-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 2px 6px;
+    border-radius: 50%;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.speak-btn:hover {
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.speak-btn:active {
+    transform: scale(1.2);
+    color: var(--accent-hover);
+}
+
 .def-item {
     margin-top: 12px;
     padding-left: 12px;

@@ -271,5 +271,52 @@ Page({
 
   restart() {
     this.buildQueue()
+  },
+
+  // ── Pronunciation ──
+  // Strategy: play audioUrl from synced result (real MP3 from Free Dictionary API,
+  // saved by the desktop app). If no audioUrl, fall back to Youdao TTS.
+  playPronunciation() {
+    const { entry, parsedResult } = this.data
+    if (!entry && !parsedResult) return
+
+    const word = parsedResult?.word || entry?.word || ''
+    if (!word) return
+
+    // Destroy previous audio if any
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
+
+    const audioUrl = parsedResult?.audioUrl
+    const audio = wx.createInnerAudioContext()
+
+    if (audioUrl) {
+      // Real human recording from Free Dictionary API (synced from desktop)
+      audio.src = audioUrl
+      audio.onError(() => {
+        // Real audio failed -> fall back to Youdao TTS
+        console.log('[pronounce] Real audio failed, falling back to Youdao TTS')
+        const fallback = wx.createInnerAudioContext()
+        fallback.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+        fallback.play()
+        this._audio = fallback
+      })
+      audio.play()
+    } else {
+      // No real recording -> Youdao TTS (American accent)
+      audio.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+      audio.play()
+    }
+
+    this._audio = audio
+  },
+
+  onUnload() {
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
   }
 })

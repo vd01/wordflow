@@ -6,7 +6,10 @@
         <text class="word-title">{{entry.word}}</text>
         <text class="word-state-badge state-{{card ? card.state : 'new'}}">{{stateLabel}}</text>
       </view>
-      <view class="word-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+      <view class="word-phonetic-row">
+        <view class="word-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+        <view class="speak-btn" bindtap="playPronunciation" hover-class="speak-btn-hover">🔊</view>
+      </view>
       <view class="word-meta" wx:if="{{nextDue}}">
         <text class="meta-item">📅 {{nextDue}}</text>
         <text class="meta-item" wx:if="{{interval}}">Interval: {{interval}}</text>

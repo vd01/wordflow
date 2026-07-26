@@ -28,6 +28,22 @@
   color: #bdc3c7;
   margin-top: 4rpx;
 }
+.word-phonetic-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 4rpx;
+}
+.speak-btn {
+  font-size: 32rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 50%;
+  opacity: 0.7;
+}
+.speak-btn-hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
 .word-meta {
   display: flex;
   gap: 20rpx;

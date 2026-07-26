@@ -912,6 +912,116 @@ func (d *DictService) CacheResult(word, result string) {
 	d.resultCache.set(word, result)
 }
 
+// LookupWordAudio fetches the pronunciation audio URL from the Free Dictionary API.
+// Returns the MP3 URL string (empty string if not found or API unavailable).
+// This is designed to be called in the background after the main lookup completes,
+// so it never blocks the user experience. The frontend can call this lazily and
+// update the UI when the result arrives.
+// The audioUrl is also merged into the cached result so subsequent lookups include it.
+func (d *DictService) LookupWordAudio(word string) string {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if word == "" {
+		return ""
+	}
+
+	// Check if we already have audioUrl in the cached result
+	if cached, ok := d.resultCache.get(word); ok {
+		var data map[string]interface{}
+		if json.Unmarshal([]byte(cached), &data) == nil {
+			if audioUrl, ok := data["audioUrl"].(string); ok && audioUrl != "" {
+				log.Printf("[AUDIO-DEBUG] Cache HIT for %q: %s", word, audioUrl)
+				return audioUrl
+			}
+		}
+	}
+
+	// Query Free Dictionary API
+	audioUrl := d.fetchFreeDictAudio(word)
+	if audioUrl == "" {
+		log.Printf("[AUDIO-DEBUG] No audio found for %q", word)
+		return ""
+	}
+
+	log.Printf("[AUDIO-DEBUG] Found audio for %q: %s", word, audioUrl)
+
+	// Merge audioUrl into the cached result (if any)
+	if cached, ok := d.resultCache.get(word); ok {
+		var data map[string]interface{}
+		if json.Unmarshal([]byte(cached), &data) == nil {
+			data["audioUrl"] = audioUrl
+			if updated, err := json.Marshal(data); err == nil {
+				d.resultCache.set(word, string(updated))
+			}
+		}
+	}
+
+	return audioUrl
+}
+
+// fetchFreeDictAudio queries the Free Dictionary API (dictionaryapi.dev) for
+// pronunciation audio URLs. Prefers US accent, then UK, then any available.
+// Returns empty string if no audio found or API unavailable.
+func (d *DictService) fetchFreeDictAudio(word string) string {
+	url := "https://api.dictionaryapi.dev/api/v2/entries/en/" + strings.ToLower(word)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("[AUDIO-DEBUG] FreeDict API request failed for %q: %v", word, err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "" // 404 = not found, silently skip
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	// API returns an array of entries
+	var entries []struct {
+		Phonetics []struct {
+			Audio string `json:"audio"`
+		} `json:"phonetics"`
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return ""
+	}
+
+	// Collect all audio URLs, prefer US accent
+	var usAudios, ukAudios, otherAudios []string
+	for _, entry := range entries {
+		for _, p := range entry.Phonetics {
+			if p.Audio == "" {
+				continue
+			}
+			if strings.Contains(p.Audio, "-us") {
+				usAudios = append(usAudios, p.Audio)
+			} else if strings.Contains(p.Audio, "-uk") {
+				ukAudios = append(ukAudios, p.Audio)
+			} else {
+				otherAudios = append(otherAudios, p.Audio)
+			}
+		}
+	}
+
+	// Priority: US > UK > other
+	if len(usAudios) > 0 {
+		return usAudios[0]
+	}
+	if len(ukAudios) > 0 {
+		return ukAudios[0]
+	}
+	if len(otherAudios) > 0 {
+		return otherAudios[0]
+	}
+
+	return ""
+}
+
 // LookupWordLLM calls LLM to get enriched word definition.
 // This is the slow path (~2-10s), called after ECDICT fast result is shown.
 func (d *DictService) LookupWordLLM(word string) (string, error) {

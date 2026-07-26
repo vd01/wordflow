@@ -56,7 +56,10 @@
     <view class="card-content {{revealed ? 'card-content--revealed' : ''}}" bindtap="reveal">
       <view class="flashcard">
         <view class="card-word">{{entry.word}}</view>
-        <view class="card-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+        <view class="card-phonetic-row">
+          <view class="card-phonetic" wx:if="{{parsedResult.phonetic}}">/{{parsedResult.phonetic}}/</view>
+          <view class="speak-btn" bindtap="playPronunciation" hover-class="speak-btn-hover">🔊</view>
+        </view>
 
         <!-- Back: revealed on tap -->
         <view class="card-back" wx:if="{{revealed}}">

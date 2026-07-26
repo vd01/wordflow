@@ -23,6 +23,7 @@
         <text class="word-text">{{item.word}}</text>
         <text class="word-state state-{{item.state}}">{{item.stateLabel}}</text>
       </view>
+      <view class="word-item-speak" catchtap="playPronunciation" data-word="{{item.word}}" data-audio-url="{{item.audioUrl}}">🔊</view>
     </view>
 
     <view class="empty-hint" wx:if="{{filtered.length === 0}}">

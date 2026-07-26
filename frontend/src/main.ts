@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync } from "../bindings/wordflow/syncservice.js";
@@ -190,6 +190,45 @@ function parseExchange(exchange: string | null | undefined): { label: string; fo
         }
     }
     return forms;
+}
+
+// ============================================================
+// Pronunciation - Two-tier: real MP3 → TTS fallback
+// ============================================================
+
+/**
+ * Play word pronunciation. Strategy mirrors vocab-agent's PronounceButton:
+ * 1. If audioUrl is available (from Free Dictionary API), play the real MP3.
+ * 2. If no audioUrl or playback fails, fall back to browser SpeechSynthesis TTS.
+ */
+function speakWord(word: string, audioUrl?: string | null) {
+    if (audioUrl) {
+        // Try real human recording first
+        const audio = new Audio(audioUrl);
+        audio.play().catch(() => {
+            // Autoplay rejection or load failure -> TTS fallback
+            speakTTS(word);
+        });
+        return;
+    }
+    // No recording -> TTS
+    speakTTS(word);
+}
+
+function speakTTS(word: string) {
+    if (!window.speechSynthesis) return;
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const utter = new SpeechSynthesisUtterance(word);
+    utter.lang = 'en-US';
+    utter.rate = 0.95;
+    // Try to pick an English (preferably US) voice
+    const voices = synth.getVoices();
+    const voice =
+        voices.find(v => v.lang === 'en-US') ??
+        voices.find(v => v.lang?.toLowerCase().startsWith('en'));
+    if (voice) utter.voice = voice;
+    synth.speak(utter);
 }
 
 // ============================================================
@@ -401,6 +440,28 @@ async function doSearch(word: string) {
         AddHistory(word, mergedJson).catch(console.error);
         CacheResult(word, mergedJson).catch(console.error);
 
+        // ── Phase 3: Background audio fetch (Free Dictionary API) ──
+        // Non-blocking: fetches pronunciation MP3 URL in the background.
+        // If found, updates the speaker button's data-audio-url and merges
+        // audioUrl into the cached result so it's available on next lookup.
+        if (!mergedData.audioUrl) {
+            LookupWordAudio(word).then(audioUrl => {
+                if (audioUrl && currentWord === word) {
+                    // Update the speaker button with the real audio URL
+                    const btn = resultEl.querySelector('.speak-btn') as HTMLElement;
+                    if (btn) btn.dataset.audioUrl = audioUrl;
+                    // Merge into cached data for future lookups
+                    mergedData.audioUrl = audioUrl;
+                    const updatedJson = JSON.stringify(mergedData);
+                    CacheResult(word, updatedJson).catch(console.error);
+                    // Also update history with audioUrl
+                    AddHistory(word, updatedJson).catch(console.error);
+                }
+            }).catch(err => {
+                console.log('[AUDIO] Background audio fetch failed (non-critical):', err);
+            });
+        }
+
     } catch (err: any) {
         loadingEl.classList.add("hidden");
         showError(String(err));
@@ -472,6 +533,10 @@ function mergeResults(ecdict: any, llm: any): any {
     merged.frq = ecdict?.frq ?? null;
     merged.exchange = ecdict?.exchange || null;
 
+    // Audio URL: from LLM result if present (e.g. if cached with audioUrl),
+    // otherwise left empty — will be filled by background LookupWordAudio call
+    merged.audioUrl = llm?.audioUrl || ecdict?.audioUrl || "";
+
     // Source tracking
     merged._sources = [];
     if (ecdict) merged._sources.push("ECDICT");
@@ -525,6 +590,8 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
     // Word header
     html += '<div class="word-header">';
     html += `<span class="word-text">${escapeHtml(data.word || "")}</span>`;
+    // Pronunciation speaker button — always shown next to the word
+    html += `<button class="speak-btn" data-word="${escapeHtml(data.word || "")}" data-audio-url="${escapeHtml(data.audioUrl || "")}" title="🔊 Pronounce">🔊</button>`;
     if (fieldEnabled(cfg, "phonetic") && data.phonetic) {
         html += `<span class="word-phonetic">${escapeHtml(data.phonetic)}</span>`;
     }
@@ -1101,6 +1168,13 @@ historyList.addEventListener("click", (e) => {
 // Click synonym/inflected tags to search
 resultEl.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
+    // Pronunciation speaker button
+    const speakBtn = target.closest(".speak-btn") as HTMLElement;
+    if (speakBtn && speakBtn.dataset.word) {
+        e.stopPropagation();
+        speakWord(speakBtn.dataset.word, speakBtn.dataset.audioUrl || null);
+        return;
+    }
     const tag = target.closest(".synonym-tag, .inflected-tag") as HTMLElement;
     if (tag && tag.dataset.word) {
         doSearch(tag.dataset.word);
@@ -1108,6 +1182,13 @@ resultEl.addEventListener("click", (e) => {
 });
 modalBody.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
+    // Pronunciation speaker button in history detail modal
+    const speakBtn = target.closest(".speak-btn") as HTMLElement;
+    if (speakBtn && speakBtn.dataset.word) {
+        e.stopPropagation();
+        speakWord(speakBtn.dataset.word, speakBtn.dataset.audioUrl || null);
+        return;
+    }
     const tag = target.closest(".synonym-tag, .inflected-tag") as HTMLElement;
     if (tag && tag.dataset.word) {
         historyDetailModal.classList.add("hidden");

@@ -52,7 +52,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
+  flex: 1;
+}
+.word-item-speak {
+  font-size: 28rpx;
+  padding: 8rpx 12rpx;
+  opacity: 0.5;
+  margin-left: 8rpx;
+}
+.word-item-speak:active {
+  opacity: 1;
+  transform: scale(1.2);
 }
 .word-text { font-size: 30rpx; color: #2c3e50; font-weight: 500; }
 .word-state {

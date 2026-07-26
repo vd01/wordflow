@@ -138,6 +138,26 @@ page { height: 100%; }
   margin-top: 8rpx;
 }
 
+.card-phonetic-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  margin-top: 8rpx;
+}
+
+.speak-btn {
+  font-size: 32rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 50%;
+  opacity: 0.7;
+}
+
+.speak-btn-hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
 /* Card back */
 .card-back { width: 100%; margin-top: 24rpx; }
 .divider {

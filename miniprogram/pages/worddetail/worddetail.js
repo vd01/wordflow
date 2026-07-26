@@ -64,5 +64,44 @@ Page({
       nextDue,
       interval
     })
+  },
+
+  playPronunciation() {
+    const { entry, parsedResult } = this.data
+    if (!entry && !parsedResult) return
+
+    const word = parsedResult?.word || entry?.word || ''
+    if (!word) return
+
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
+
+    const audioUrl = parsedResult?.audioUrl
+    const audio = wx.createInnerAudioContext()
+
+    if (audioUrl) {
+      audio.src = audioUrl
+      audio.onError(() => {
+        const fallback = wx.createInnerAudioContext()
+        fallback.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+        fallback.play()
+        this._audio = fallback
+      })
+      audio.play()
+    } else {
+      audio.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+      audio.play()
+    }
+
+    this._audio = audio
+  },
+
+  onUnload() {
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
   }
 })

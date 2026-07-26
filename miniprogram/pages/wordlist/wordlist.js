@@ -18,7 +18,7 @@ Page({
     const reviews = store.getReviews()
     const counts = fsrsEngine.getQueueCounts(store.getWords(), reviews)
 
-    // Enrich words with state info
+    // Enrich words with state info + audioUrl from parsed result
     const enriched = words.map((w) => {
       const card = reviews[w.id]
       let state = 'new'
@@ -27,7 +27,9 @@ Page({
         state = card.state
         stateLabel = fsrsEngine.STATE_LABELS[card.state] || 'Unknown'
       }
-      return Object.assign({}, w, { state, stateLabel })
+      const parsed = store.parseResult(w)
+      const audioUrl = parsed?.audioUrl || ''
+      return Object.assign({}, w, { state, stateLabel, audioUrl })
     })
 
     this.setData({
@@ -56,5 +58,38 @@ Page({
 
   goBack() {
     wx.navigateBack()
+  },
+
+  playPronunciation(e) {
+    const { word, audioUrl } = e.currentTarget.dataset
+    if (!word) return
+
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
+
+    const audio = wx.createInnerAudioContext()
+    if (audioUrl) {
+      audio.src = audioUrl
+      audio.onError(() => {
+        const fallback = wx.createInnerAudioContext()
+        fallback.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+        fallback.play()
+        this._audio = fallback
+      })
+      audio.play()
+    } else {
+      audio.src = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=1'
+      audio.play()
+    }
+    this._audio = audio
+  },
+
+  onUnload() {
+    if (this._audio) {
+      this._audio.destroy()
+      this._audio = null
+    }
   }
 })
