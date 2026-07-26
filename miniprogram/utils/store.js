@@ -52,11 +52,18 @@ function removeReview(id) {
 // --- Word operations ---
 
 // Merge pulled entries into local store (last-write-wins by updatedAt; soft-deletes remove).
-function mergePulled(entries, serverNow) {
+// When isFullSync is true (initial/full pull), local entries not present in the server
+// response are removed — the server response is treated as the source of truth.
+function mergePulled(entries, serverNow, isFullSync) {
   const map = getWords()
   const reviews = getReviews()
   let changed = 0
+
+  // Build a set of server entry IDs for full-sync reconciliation
+  const serverIds = isFullSync ? new Set() : null
+
   ;(entries || []).forEach((e) => {
+    if (serverIds) serverIds.add(e.id)
     const cur = map[e.id]
     if (!cur || (e.updatedAt || 0) > (cur.updatedAt || 0)) {
       if (e.deleted) {
@@ -68,6 +75,18 @@ function mergePulled(entries, serverNow) {
       changed++
     }
   })
+
+  // Full sync: remove local entries not in server response (orphans)
+  if (serverIds) {
+    Object.keys(map).forEach((id) => {
+      if (!serverIds.has(id)) {
+        delete map[id]
+        delete reviews[id]
+        changed++
+      }
+    })
+  }
+
   setWords(map)
   setReviews(reviews)
   if (serverNow) setLastSync(serverNow)

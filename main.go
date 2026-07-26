@@ -1638,6 +1638,7 @@ type HistoryEntry struct {
 	Result    string `json:"result"`    // JSON string of merged ECDICT+LLM result
 	CreatedAt int64  `json:"createdAt"` // Unix timestamp (seconds)
 	UpdatedAt int64  `json:"updatedAt"` // Unix timestamp (seconds)
+	Deleted   bool   `json:"deleted"`   // Soft delete flag (synced to server)
 }
 
 // HistoryService manages the local word book using SQLite.
@@ -1687,10 +1688,22 @@ func (h *HistoryService) openDB() error {
 			word       TEXT NOT NULL,
 			result     TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL DEFAULT 0,
-			updated_at INTEGER NOT NULL DEFAULT 0
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			deleted    INTEGER NOT NULL DEFAULT 0
 		)
 	`); err != nil {
 		return fmt.Errorf("创建 history 表失败: %v", err)
+	}
+
+	// Migrate: add deleted column if it doesn't exist (for existing DBs)
+	var deletedCol int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('history') WHERE name = 'deleted'").Scan(&deletedCol)
+	if err == nil && deletedCol == 0 {
+		if _, err := db.Exec("ALTER TABLE history ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"); err != nil {
+			log.Printf("Warning: add deleted column failed: %v", err)
+		} else {
+			log.Printf("Migration: added column history.deleted")
+		}
 	}
 
 	// Index for word lookup
@@ -1793,7 +1806,7 @@ func (h *HistoryService) GetHistory() []HistoryEntry {
 		return []HistoryEntry{}
 	}
 
-	rows, err := db.Query("SELECT id, word, result, created_at, updated_at FROM history ORDER BY created_at DESC")
+	rows, err := db.Query("SELECT id, word, result, created_at, updated_at, deleted FROM history WHERE deleted = 0 ORDER BY created_at DESC")
 	if err != nil {
 		log.Printf("HistoryService: query error: %v", err)
 		return []HistoryEntry{}
@@ -1803,9 +1816,11 @@ func (h *HistoryService) GetHistory() []HistoryEntry {
 	var entries []HistoryEntry
 	for rows.Next() {
 		var e HistoryEntry
-		if err := rows.Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var deleted int
+		if err := rows.Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt, &deleted); err != nil {
 			continue
 		}
+		e.Deleted = deleted == 1
 		entries = append(entries, e)
 	}
 	return entries
@@ -1837,13 +1852,14 @@ func (h *HistoryService) addHistoryInternal(word, result string, skipSync bool) 
 
 	// Check if word already exists
 	var existingID string
-	err := h.db.QueryRow("SELECT id FROM history WHERE word = ? COLLATE NOCASE", word).Scan(&existingID)
+	var existingDeleted int
+	err := h.db.QueryRow("SELECT id, deleted FROM history WHERE word = ? COLLATE NOCASE", word).Scan(&existingID, &existingDeleted)
 
 	if err == sql.ErrNoRows {
 		// New entry
 		id := fmt.Sprintf("%d", time.Now().UnixNano())
 		_, err := h.db.Exec(
-			"INSERT INTO history (id, word, result, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+			"INSERT INTO history (id, word, result, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, 0)",
 			id, word, result, now, now,
 		)
 		if err != nil {
@@ -1851,9 +1867,9 @@ func (h *HistoryService) addHistoryInternal(word, result string, skipSync bool) 
 		}
 		savedEntry = HistoryEntry{ID: id, Word: word, Result: result, CreatedAt: now, UpdatedAt: now}
 	} else if err == nil {
-		// Update existing entry
+		// Update existing entry (also undelete if it was soft-deleted)
 		_, err := h.db.Exec(
-			"UPDATE history SET result = ?, updated_at = ? WHERE id = ?",
+			"UPDATE history SET result = ?, updated_at = ?, deleted = 0 WHERE id = ?",
 			result, now, existingID,
 		)
 		if err != nil {
@@ -1872,7 +1888,8 @@ func (h *HistoryService) addHistoryInternal(word, result string, skipSync bool) 
 	return nil
 }
 
-// DeleteHistory removes an entry by ID
+// DeleteHistory soft-deletes an entry by ID (marks as deleted for sync).
+// The entry remains in the DB so the deletion can be synced to the server.
 func (h *HistoryService) DeleteHistory(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1881,7 +1898,40 @@ func (h *HistoryService) DeleteHistory(id string) error {
 		return fmt.Errorf("数据库未初始化")
 	}
 
-	_, err := h.db.Exec("DELETE FROM history WHERE id = ?", id)
+	now := time.Now().Unix()
+	_, err := h.db.Exec("UPDATE history SET deleted = 1, updated_at = ? WHERE id = ?", now, id)
+	if err != nil {
+		return err
+	}
+
+	// Notify sync service (non-blocking) — push the deletion to server
+	if h.syncCb != nil {
+		// Look up the entry to build a HistoryEntry with the deleted flag
+		var e HistoryEntry
+		err := h.db.QueryRow(
+			"SELECT id, word, result, created_at, updated_at, deleted FROM history WHERE id = ?",
+			id,
+		).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt, &e.Deleted)
+		if err == nil {
+			go h.syncCb(e)
+		}
+	}
+
+	return nil
+}
+
+// SoftDeleteFromSync marks an entry as deleted from a server pull, without
+// triggering the sync callback (to avoid pushing it back to the server).
+func (h *HistoryService) SoftDeleteFromSync(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+
+	now := time.Now().Unix()
+	_, err := h.db.Exec("UPDATE history SET deleted = 1, updated_at = ? WHERE id = ?", now, id)
 	return err
 }
 
@@ -1909,10 +1959,12 @@ func (h *HistoryService) GetHistoryEntry(id string) *HistoryEntry {
 	}
 
 	var e HistoryEntry
+	var deleted int
 	err := db.QueryRow(
-		"SELECT id, word, result, created_at, updated_at FROM history WHERE id = ?",
+		"SELECT id, word, result, created_at, updated_at, deleted FROM history WHERE id = ?",
 		id,
-	).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt, &deleted)
+	e.Deleted = deleted == 1
 
 	if err != nil {
 		return nil
@@ -1932,10 +1984,12 @@ func (h *HistoryService) GetHistoryByWord(word string) *HistoryEntry {
 	}
 
 	var e HistoryEntry
+	var deleted int
 	err := db.QueryRow(
-		"SELECT id, word, result, created_at, updated_at FROM history WHERE word = ? COLLATE NOCASE",
+		"SELECT id, word, result, created_at, updated_at, deleted FROM history WHERE word = ? COLLATE NOCASE AND deleted = 0",
 		word,
-	).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt, &deleted)
+	e.Deleted = deleted == 1
 
 	if err != nil {
 		return nil
@@ -1953,7 +2007,7 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 		return []HistoryEntry{}
 	}
 
-	rows, err := db.Query("SELECT id, word, result, created_at, updated_at FROM history ORDER BY updated_at ASC")
+	rows, err := db.Query("SELECT id, word, result, created_at, updated_at, deleted FROM history ORDER BY updated_at ASC")
 	if err != nil {
 		return []HistoryEntry{}
 	}
@@ -1962,9 +2016,11 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 	var entries []HistoryEntry
 	for rows.Next() {
 		var e HistoryEntry
-		if err := rows.Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var deleted int
+		if err := rows.Scan(&e.ID, &e.Word, &e.Result, &e.CreatedAt, &e.UpdatedAt, &deleted); err != nil {
 			continue
 		}
+		e.Deleted = deleted == 1
 		entries = append(entries, e)
 	}
 	return entries
@@ -2270,7 +2326,7 @@ func (s *SyncService) PushToServer() (string, error) {
 		return "No data to sync", nil
 	}
 
-	// Convert to sync entries
+	// Convert to sync entries (include deleted flag for proper sync)
 	syncEntries := make([]syncserver.SyncEntry, len(entries))
 	for i, e := range entries {
 		syncEntries[i] = syncserver.SyncEntry{
@@ -2279,6 +2335,7 @@ func (s *SyncService) PushToServer() (string, error) {
 			Result:    e.Result,
 			CreatedAt: e.CreatedAt,
 			UpdatedAt: e.UpdatedAt,
+			Deleted:   e.Deleted,
 		}
 	}
 
@@ -2381,13 +2438,34 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 
 	// Merge into local history (using AddHistoryFromSync to avoid push-back loop)
 	merged := 0
+	isFullSync := since == 0
+
+	// For full sync, build a set of server entry IDs for reconciliation
+	serverIDs := make(map[string]bool)
+	if isFullSync {
+		for _, e := range result.Entries {
+			serverIDs[e.ID] = true
+		}
+	}
+
 	for _, e := range result.Entries {
 		if e.Deleted {
-			s.history.DeleteHistory(e.ID)
+			s.history.SoftDeleteFromSync(e.ID)
 			continue
 		}
 		s.history.AddHistoryFromSync(e.Word, e.Result)
 		merged++
+	}
+
+	// Full sync: soft-delete local entries not present on server (orphans)
+	if isFullSync {
+		localEntries := s.history.GetAllEntriesForSync()
+		for _, e := range localEntries {
+			if !e.Deleted && !serverIDs[e.ID] {
+				s.history.SoftDeleteFromSync(e.ID)
+				merged++
+			}
+		}
 	}
 
 	// Save lastSyncTime from server response for incremental sync
@@ -2401,7 +2479,7 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 	return fmt.Sprintf("Pulled and merged %d entries", merged), nil
 }
 
-// OnEntryAdded is called by HistoryService when a new entry is saved.
+// OnEntryAdded is called by HistoryService when a new entry is saved or deleted.
 // If auto-sync is enabled, it pushes the entry to the server in the background.
 func (s *SyncService) OnEntryAdded(entry HistoryEntry) {
 	if !s.autoSync || s.syncAddr == "" || s.syncToken == "" {
@@ -2411,6 +2489,7 @@ func (s *SyncService) OnEntryAdded(entry HistoryEntry) {
 }
 
 // pushEntryAsync pushes a single entry to the server in the background.
+// Handles both new/updated entries and deletions (entry.Deleted = true).
 func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 	syncEntry := syncserver.SyncEntry{
 		ID:        entry.ID,
@@ -2418,6 +2497,7 @@ func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 		Result:    entry.Result,
 		CreatedAt: entry.CreatedAt,
 		UpdatedAt: entry.UpdatedAt,
+		Deleted:   entry.Deleted,
 	}
 
 	reqBody := syncserver.SyncPushRequest{Entries: []syncserver.SyncEntry{syncEntry}}
@@ -2453,7 +2533,11 @@ func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 		return
 	}
 
-	log.Printf("SyncService: auto-pushed '%s' to server", entry.Word)
+	if entry.Deleted {
+		log.Printf("SyncService: auto-pushed deletion of '%s' (id=%s) to server", entry.Word, entry.ID)
+	} else {
+		log.Printf("SyncService: auto-pushed '%s' to server", entry.Word)
+	}
 }
 
 // ============================================================

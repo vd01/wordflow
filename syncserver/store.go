@@ -387,11 +387,12 @@ func (s *Store) PullEntries(token string, since int64) ([]SyncEntry, error) {
 			token, since,
 		)
 	} else {
-		// Initial sync: return all non-deleted entries
+		// Initial sync: return all entries including deleted ones
+		// so the client can remove locally-cached entries that were deleted on another device
 		rows, err = s.db.Query(
 			`SELECT id, word, result, created_at, updated_at, deleted
 			 FROM sync_entries
-			 WHERE token = ? AND deleted = 0
+			 WHERE token = ?
 			 ORDER BY updated_at ASC`,
 			token,
 		)

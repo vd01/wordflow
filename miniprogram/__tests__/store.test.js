@@ -60,6 +60,40 @@ describe('store — word operations', () => {
     expect(store.getReview('1')).toBeNull()
   })
 
+  test('mergePulled full sync removes local orphans not on server', () => {
+    // Seed local store with two entries
+    store.mergePulled([
+      { id: '1', word: 'hello', result: 'v1', createdAt: 1000, updatedAt: 1000, deleted: false },
+      { id: '2', word: 'world', result: 'v1', createdAt: 2000, updatedAt: 2000, deleted: false }
+    ], 2000)
+
+    // Full sync: server only has entry '1' (entry '2' was deleted on another device)
+    const r = store.mergePulled([
+      { id: '1', word: 'hello', result: 'v1', createdAt: 1000, updatedAt: 1000, deleted: false }
+    ], 3000, true)
+
+    expect(store.getWord('1')).not.toBeNull()
+    expect(store.getWord('2')).toBeNull()  // orphan removed
+    expect(r.changed).toBe(1)  // 1 orphan removed
+  })
+
+  test('mergePulled full sync handles deleted entries from server', () => {
+    // Seed local store
+    store.mergePulled([
+      { id: '1', word: 'hello', result: 'v1', createdAt: 1000, updatedAt: 1000, deleted: false },
+      { id: '2', word: 'world', result: 'v1', createdAt: 2000, updatedAt: 2000, deleted: false }
+    ], 2000)
+
+    // Full sync: server returns entry '1' as active and entry '2' as deleted
+    const r = store.mergePulled([
+      { id: '1', word: 'hello', result: 'v1', createdAt: 1000, updatedAt: 1000, deleted: false },
+      { id: '2', word: 'world', result: '', createdAt: 2000, updatedAt: 3000, deleted: true }
+    ], 3000, true)
+
+    expect(store.getWord('1')).not.toBeNull()
+    expect(store.getWord('2')).toBeNull()  // deleted by server tombstone
+  })
+
   test('wordList returns sorted by createdAt desc', () => {
     store.mergePulled([
       { id: '1', word: 'first', result: '', createdAt: 1000, updatedAt: 1000, deleted: false },

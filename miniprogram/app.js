@@ -114,7 +114,7 @@ App({
     const since = store.getLastSync()
     try {
       const res = await sync.pull(serverAddr, token, since || 0)
-      const r = store.mergePulled(res.entries || [], res.serverNow)
+      const r = store.mergePulled(res.entries || [], res.serverNow, !since)
       if (r.changed > 0) {
         console.log('Auto sync: ' + r.changed + ' entries updated')
       }

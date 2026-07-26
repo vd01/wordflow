@@ -203,8 +203,9 @@ Page({
 
     this.setData({ busy: true, status: 'Syncing...' })
     try {
-      const res = await sync.pull(serverAddr, token, since !== undefined ? since : (store.getLastSync() || 0))
-      const r = store.mergePulled(res.entries || [], res.serverNow)
+      const effectiveSince = since !== undefined ? since : (store.getLastSync() || 0)
+      const res = await sync.pull(serverAddr, token, effectiveSince)
+      const r = store.mergePulled(res.entries || [], res.serverNow, effectiveSince === 0)
       this.setData({
         status: 'Synced ' + r.changed + ' entries, local total: ' + r.total,
         ...refreshCounts()

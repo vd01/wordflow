@@ -77,4 +77,16 @@ function wechatLogin(serverAddr, code, scene) {
   })
 }
 
-module.exports = { health, getStatus, pull, wechatLogin, base, authHeader }
+// POST /api/v1/sync/push  (auth)
+// Push entries (including deletions) to the server.
+// entries: array of { id, word, result, createdAt, updatedAt, deleted }
+function push(serverAddr, token, entries) {
+  return request({
+    url: base(serverAddr) + '/api/v1/sync/push',
+    method: 'POST',
+    header: authHeader(token),
+    data: { entries: entries }
+  })
+}
+
+module.exports = { health, getStatus, pull, push, wechatLogin, base, authHeader }
