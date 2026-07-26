@@ -22,3 +22,6 @@ miniprogram/ci/private.key
 
 # Compiled binaries
 *.exe
+
+# Auto-generated Wails bindings
+frontend/bindings/
