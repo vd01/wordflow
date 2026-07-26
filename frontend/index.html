@@ -115,14 +115,32 @@
                     <input type="text" id="sync-server-addr" placeholder="http://your-server:9274"/>
                     <small class="form-hint">Your cloud-deployed WordWise sync server. For local testing: http://127.0.0.1:9274</small>
                 </div>
-                <div class="form-group">
-                    <label for="sync-user-token">User Token</label>
+
+                <!-- QR Code Login Section -->
+                <div id="sync-qr-section" class="form-group">
+                    <label>🔐 WeChat QR Code Login</label>
+                    <div class="qr-login-area">
+                        <div id="qr-code-display" class="qr-code-display hidden">
+                            <img id="qr-code-image" class="qr-code-image" alt="Scan QR code with WeChat"/>
+                            <div id="qr-pairing-code" class="qr-pairing-code hidden"></div>
+                        </div>
+                        <div id="qr-status-text" class="qr-status-text">Click "Generate QR Code" to start</div>
+                        <div class="sync-actions">
+                            <button id="btn-sync-qrcode" class="primary-btn" type="button" style="width:100%">📱 Generate QR Code</button>
+                        </div>
+                    </div>
+                    <small class="form-hint">Scan the QR code with WeChat to log in. The mini program will open and authenticate automatically.</small>
+                </div>
+
+                <!-- Token display (shown after login) -->
+                <div id="sync-token-section" class="form-group hidden">
+                    <label>✅ Sync Connected</label>
                     <div class="input-with-toggle">
-                        <input type="password" id="sync-user-token" placeholder="Enter your sync token"/>
+                        <input type="password" id="sync-user-token" readonly/>
                         <button id="btn-toggle-sync-token" class="toggle-visibility" type="button" title="Show/Hide">👁️</button>
                     </div>
-                    <small class="form-hint">Token assigned by the server — treat it like your password</small>
                 </div>
+
                 <div class="form-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="sync-auto-sync" checked/>
@@ -132,7 +150,6 @@
                 </div>
                 <div class="sync-actions">
                     <button id="btn-sync-test" class="secondary-btn" type="button">🔗 Test Connection</button>
-                    <button id="btn-sync-create-user" class="secondary-btn" type="button">🆕 Get Token</button>
                 </div>
                 <div class="sync-actions">
                     <button id="btn-sync-push" class="secondary-btn" type="button">⬆️ Push to Server</button>

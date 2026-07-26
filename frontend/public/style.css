@@ -1381,3 +1381,44 @@ body {
 #settings-panel.behind-modal .settings-content {
     overflow: hidden;
 }
+
+/* ===== QR Code Login ===== */
+.qr-login-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.qr-code-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.qr-code-image {
+    width: 200px;
+    height: 200px;
+    border-radius: var(--radius-sm);
+}
+
+.qr-pairing-code {
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: 4px;
+    color: var(--accent);
+    font-family: monospace;
+    padding: 12px 24px;
+    background: var(--bg-primary);
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.qr-status-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}

@@ -2,7 +2,7 @@ import { Events } from "@wailsio/runtime";
 import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordwise/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordwise/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordwise/historyservice.js";
-import { GetSyncConfig, SaveSyncConfig, TestConnection, CreateUser, PushToServer, PullFromServer } from "../bindings/wordwise/syncservice.js";
+import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus } from "../bindings/wordwise/syncservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -1106,17 +1106,25 @@ Events.On("clipboard-english-detected", (event: any) => {
 searchInput.focus();
 
 // ============================================================
-// Sync - 多设备同步
+// Sync - Multi-device sync with WeChat QR code login
 // ============================================================
 const inputSyncServerAddr = document.getElementById("sync-server-addr") as HTMLInputElement;
 const inputSyncUserToken = document.getElementById("sync-user-token") as HTMLInputElement;
 const inputSyncAutoSync = document.getElementById("sync-auto-sync") as HTMLInputElement;
 const btnToggleSyncToken = document.getElementById("btn-toggle-sync-token") as HTMLButtonElement;
 const btnSyncTest = document.getElementById("btn-sync-test") as HTMLButtonElement;
-const btnSyncCreateUser = document.getElementById("btn-sync-create-user") as HTMLButtonElement;
 const btnSyncPush = document.getElementById("btn-sync-push") as HTMLButtonElement;
 const btnSyncPull = document.getElementById("btn-sync-pull") as HTMLButtonElement;
 const btnSaveSyncConfig = document.getElementById("btn-save-sync-config") as HTMLButtonElement;
+const btnSyncQrCode = document.getElementById("btn-sync-qrcode") as HTMLButtonElement;
+const qrCodeDisplay = document.getElementById("qr-code-display") as HTMLDivElement;
+const qrCodeImage = document.getElementById("qr-code-image") as HTMLImageElement;
+const qrPairingCode = document.getElementById("qr-pairing-code") as HTMLDivElement;
+const qrStatusText = document.getElementById("qr-status-text") as HTMLDivElement;
+const syncTokenSection = document.getElementById("sync-token-section") as HTMLDivElement;
+
+let qrPollTimer: ReturnType<typeof setInterval> | null = null;
+let currentQrScene = "";
 
 async function loadSyncConfig() {
     try {
@@ -1125,9 +1133,20 @@ async function loadSyncConfig() {
             inputSyncServerAddr.value = config.syncAddr || "";
             inputSyncUserToken.value = config.syncToken || "";
             inputSyncAutoSync.checked = config.autoSync === "true";
+            // Show/hide token section based on whether token exists
+            updateSyncUI(config.syncToken);
         }
     } catch (err) {
         console.error("Failed to load sync config:", err);
+    }
+}
+
+function updateSyncUI(token?: string) {
+    const hasToken = !!(token || inputSyncUserToken.value);
+    if (hasToken) {
+        syncTokenSection.classList.remove("hidden");
+    } else {
+        syncTokenSection.classList.add("hidden");
     }
 }
 
@@ -1135,30 +1154,94 @@ async function testConnection() {
     try {
         await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
         btnSyncTest.disabled = true;
-        btnSyncTest.textContent = "测试中...";
+        btnSyncTest.textContent = "Testing...";
         const result = await TestConnection();
         showToast(result);
     } catch (err: any) {
-        showError("连接失败: " + String(err));
+        showError("Connection failed: " + String(err));
     } finally {
         btnSyncTest.disabled = false;
-        btnSyncTest.textContent = "🔗 测试连接";
+        btnSyncTest.textContent = "🔗 Test Connection";
     }
 }
 
-async function createUser() {
+async function requestQrCode() {
+    // Stop any existing poll
+    stopQrPoll();
+
     try {
-        await SaveSyncConfig(inputSyncServerAddr.value, "", inputSyncAutoSync.checked);
-        btnSyncCreateUser.disabled = true;
-        btnSyncCreateUser.textContent = "获取中...";
-        const token = await CreateUser();
-        inputSyncUserToken.value = token;
-        showToast(`Token 获取成功！请妥善保管 ✅`);
+        await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
+        btnSyncQrCode.disabled = true;
+        btnSyncQrCode.textContent = "Generating...";
+        qrStatusText.textContent = "Requesting QR code...";
+
+        const result = await RequestQrCode() as any;
+
+        currentQrScene = result.scene;
+        const expiresIn = result.expiresIn || 300;
+
+        if (result.qrcode) {
+            // WeChat QR code image available — display it
+            qrCodeImage.src = result.qrcode;
+            qrCodeImage.classList.remove("hidden");
+            qrPairingCode.classList.add("hidden");
+            qrCodeDisplay.classList.remove("hidden");
+            qrStatusText.textContent = `Scan with WeChat (expires in ${Math.ceil(expiresIn / 60)} min)`;
+        } else {
+            // Fallback: show pairing code
+            qrCodeImage.classList.add("hidden");
+            qrPairingCode.textContent = result.scene;
+            qrPairingCode.classList.remove("hidden");
+            qrCodeDisplay.classList.remove("hidden");
+            qrStatusText.textContent = `Enter this code in the mini program (expires in ${Math.ceil(expiresIn / 60)} min)`;
+        }
+
+        // Start polling for scan status
+        startQrPoll();
+
     } catch (err: any) {
-        showError("获取Token失败: " + String(err));
+        showError("QR code failed: " + String(err));
+        qrStatusText.textContent = "Failed to generate QR code";
     } finally {
-        btnSyncCreateUser.disabled = false;
-        btnSyncCreateUser.textContent = "🆕 获取Token";
+        btnSyncQrCode.disabled = false;
+        btnSyncQrCode.textContent = "📱 Generate QR Code";
+    }
+}
+
+function startQrPoll() {
+    stopQrPoll();
+    qrPollTimer = setInterval(async () => {
+        try {
+            const result = await PollQrCodeStatus(currentQrScene) as any;
+
+            if (result.status === "scanned" && result.token) {
+                // Login complete!
+                stopQrPoll();
+                inputSyncUserToken.value = result.token;
+                updateSyncUI(result.token);
+                qrCodeDisplay.classList.add("hidden");
+                qrStatusText.textContent = "✅ Login successful! Token saved.";
+                showToast("WeChat login successful! ✅");
+            } else if (result.status === "expired") {
+                stopQrPoll();
+                qrCodeDisplay.classList.add("hidden");
+                qrStatusText.textContent = "QR code expired. Click to generate a new one.";
+            } else {
+                // Still pending
+                qrStatusText.textContent = `Waiting for scan... (scene: ${currentQrScene})`;
+            }
+        } catch (err: any) {
+            console.error("QR poll error:", err);
+            stopQrPoll();
+            qrStatusText.textContent = "Polling failed. Please try again.";
+        }
+    }, 3000); // Poll every 3 seconds
+}
+
+function stopQrPoll() {
+    if (qrPollTimer) {
+        clearInterval(qrPollTimer);
+        qrPollTimer = null;
     }
 }
 
@@ -1166,14 +1249,14 @@ async function syncPush() {
     try {
         await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
         btnSyncPush.disabled = true;
-        btnSyncPush.textContent = "推送中...";
+        btnSyncPush.textContent = "Pushing...";
         const result = await PushToServer();
         showToast(result);
     } catch (err: any) {
-        showError("推送失败: " + String(err));
+        showError("Push failed: " + String(err));
     } finally {
         btnSyncPush.disabled = false;
-        btnSyncPush.textContent = "⬆️ 推送到服务器";
+        btnSyncPush.textContent = "⬆️ Push to Server";
     }
 }
 
@@ -1181,32 +1264,32 @@ async function syncPull() {
     try {
         await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
         btnSyncPull.disabled = true;
-        btnSyncPull.textContent = "拉取中...";
+        btnSyncPull.textContent = "Pulling...";
         const result = await PullFromServer();
         showToast(result);
         if (!historyPanel.classList.contains("hidden")) {
             await showHistory();
         }
     } catch (err: any) {
-        showError("拉取失败: " + String(err));
+        showError("Pull failed: " + String(err));
     } finally {
         btnSyncPull.disabled = false;
-        btnSyncPull.textContent = "⬇️ 从服务器拉取";
+        btnSyncPull.textContent = "⬇️ Pull from Server";
     }
 }
 
 async function saveSyncConfig() {
     try {
         await SaveSyncConfig(inputSyncServerAddr.value, inputSyncUserToken.value, inputSyncAutoSync.checked);
-        showToast("同步设置已保存 ✅");
+        showToast("Sync settings saved ✅");
     } catch (err: any) {
-        showError("保存失败: " + String(err));
+        showError("Save failed: " + String(err));
     }
 }
 
 // Sync event listeners
 btnSyncTest.addEventListener("click", testConnection);
-btnSyncCreateUser.addEventListener("click", createUser);
+btnSyncQrCode.addEventListener("click", requestQrCode);
 btnSyncPush.addEventListener("click", syncPush);
 btnSyncPull.addEventListener("click", syncPull);
 btnSaveSyncConfig.addEventListener("click", saveSyncConfig);

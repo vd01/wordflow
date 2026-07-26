@@ -61,8 +61,8 @@ func (s *Server) Start() error {
 	// Health check
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 
-	// CORS & auth middleware
-	handler := s.corsMiddleware(s.authMiddleware(mux))
+	// Request logging + CORS & auth middleware
+	handler := s.loggingMiddleware(s.corsMiddleware(s.authMiddleware(mux)))
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -108,6 +108,67 @@ func (s *Server) Addr() string {
 // Middleware
 // ============================================================
 
+// responseRecorder wraps http.ResponseWriter to capture status code for logging
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *responseRecorder) WriteHeader(code int) {
+	r.statusCode = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// loggingMiddleware logs every request with method, path, status, duration, and token prefix
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// Capture token prefix for logging (don't log full token)
+		tokenPrefix := ""
+		if t := extractToken(r); t != "" {
+			if len(t) > 8 {
+				tokenPrefix = t[:8] + "..."
+			} else {
+				tokenPrefix = t[:min(len(t), 4)] + "..."
+			}
+		}
+
+		// Wrap writer to capture status code
+		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
+
+		next.ServeHTTP(rec, r)
+
+		duration := time.Since(start)
+
+		// Build log line
+		logMsg := fmt.Sprintf("[%s] %s %s → %d (%s)",
+			r.Method, r.URL.Path, r.URL.RawQuery,
+			rec.statusCode, duration.Round(time.Microsecond),
+		)
+
+		if tokenPrefix != "" {
+			logMsg += fmt.Sprintf(" token=%s", tokenPrefix)
+		}
+
+		// Add client IP
+		if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+			logMsg += fmt.Sprintf(" ip=%s", ip)
+		} else {
+			logMsg += fmt.Sprintf(" ip=%s", r.RemoteAddr)
+		}
+
+		// Log at appropriate level
+		if rec.statusCode >= 500 {
+			log.Printf("ERROR %s", logMsg)
+		} else if rec.statusCode >= 400 {
+			log.Printf("WARN  %s", logMsg)
+		} else {
+			log.Printf("INFO  %s", logMsg)
+		}
+	})
+}
+
 // corsMiddleware adds CORS headers for mobile app access
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,11 +206,14 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Extract token from header
 		token := extractToken(r)
 		if token == "" {
+			log.Printf("AUTH  %s %s → 401 (no token provided)", r.Method, r.URL.Path)
 			writeError(w, http.StatusUnauthorized, "Missing auth token, provide in Authorization or X-Sync-Token header")
 			return
 		}
 
 		if !s.store.ValidateToken(token) {
+			tp := token[:min(len(token), 8)] + "..."
+			log.Printf("AUTH  %s %s → 401 (invalid token=%s)", r.Method, r.URL.Path, tp)
 			writeError(w, http.StatusUnauthorized, "Invalid token, please re-authenticate")
 			return
 		}
@@ -223,9 +287,12 @@ func (s *Server) getWeChatAccessToken() (string, error) {
 	if s.accessToken != "" && time.Now().Before(s.accessTokenExpire) {
 		token := s.accessToken
 		s.accessTokenMu.RUnlock()
+		log.Printf("WECHAT access_token: using cached token (expires at %s)", s.accessTokenExpire.Format(time.RFC3339))
 		return token, nil
 	}
 	s.accessTokenMu.RUnlock()
+
+	log.Printf("WECHAT access_token: cache miss or expired, fetching new token from WeChat API...")
 
 	// Fetch new access_token
 	url := fmt.Sprintf(
@@ -233,9 +300,11 @@ func (s *Server) getWeChatAccessToken() (string, error) {
 		s.appID, s.appSecret,
 	)
 
+	start := time.Now()
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
+		log.Printf("WECHAT access_token: request FAILED after %v: %v", time.Since(start), err)
 		return "", fmt.Errorf("request WeChat access_token failed: %v", err)
 	}
 	defer resp.Body.Close()
@@ -245,12 +314,16 @@ func (s *Server) getWeChatAccessToken() (string, error) {
 		return "", fmt.Errorf("read WeChat access_token response failed: %v", err)
 	}
 
+	log.Printf("WECHAT access_token: response received in %v, body=%s", time.Since(start), truncate(string(body), 200))
+
 	var result wechatAccessTokenResponse
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("WECHAT access_token: JSON parse failed: %v", err)
 		return "", fmt.Errorf("parse WeChat access_token response failed: %v", err)
 	}
 
 	if result.ErrCode != 0 {
+		log.Printf("WECHAT access_token: ERROR errcode=%d, errmsg=%s", result.ErrCode, result.ErrMsg)
 		return "", fmt.Errorf("WeChat access_token error: errcode=%d, errmsg=%s", result.ErrCode, result.ErrMsg)
 	}
 
@@ -260,7 +333,8 @@ func (s *Server) getWeChatAccessToken() (string, error) {
 	s.accessTokenExpire = time.Now().Add(time.Duration(result.ExpiresIn-300) * time.Second)
 	s.accessTokenMu.Unlock()
 
-	log.Printf("WeChat access_token refreshed, expires_in=%ds", result.ExpiresIn)
+	log.Printf("WECHAT access_token: refreshed successfully, expires_in=%ds, will expire at %s",
+		result.ExpiresIn, s.accessTokenExpire.Format(time.RFC3339))
 	return result.AccessToken, nil
 }
 
@@ -270,14 +344,18 @@ func (s *Server) code2Session(code string) (*wechatCode2SessionResponse, error) 
 		return nil, fmt.Errorf("WeChat AppID/AppSecret not configured")
 	}
 
+	log.Printf("WECHAT code2Session: exchanging code=%s... for openid", code[:min(len(code), 8)])
+
 	url := fmt.Sprintf(
 		"https://api.weixin.qq.com/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
 		s.appID, s.appSecret, code,
 	)
 
+	start := time.Now()
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
+		log.Printf("WECHAT code2Session: request FAILED after %v: %v", time.Since(start), err)
 		return nil, fmt.Errorf("request WeChat code2Session failed: %v", err)
 	}
 	defer resp.Body.Close()
@@ -287,21 +365,36 @@ func (s *Server) code2Session(code string) (*wechatCode2SessionResponse, error) 
 		return nil, fmt.Errorf("read WeChat code2Session response failed: %v", err)
 	}
 
+	log.Printf("WECHAT code2Session: response received in %v, body=%s", time.Since(start), truncate(string(body), 200))
+
 	var result wechatCode2SessionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("WECHAT code2Session: JSON parse failed: %v", err)
 		return nil, fmt.Errorf("parse WeChat code2Session response failed: %v", err)
 	}
 
 	if result.ErrCode != 0 {
+		log.Printf("WECHAT code2Session: ERROR errcode=%d, errmsg=%s", result.ErrCode, result.ErrMsg)
 		return nil, fmt.Errorf("WeChat code2Session error: errcode=%d, errmsg=%s", result.ErrCode, result.ErrMsg)
 	}
 
+	log.Printf("WECHAT code2Session: success, openid=%s..., unionid=%s",
+		result.OpenID[:min(8, len(result.OpenID))],
+		func() string {
+			if result.UnionID != "" {
+				return result.UnionID[:min(8, len(result.UnionID))] + "..."
+			}
+			return "(none)"
+		}(),
+	)
 	return &result, nil
 }
 
 // generateWeChatQrCode calls wxacode.getUnlimited to generate a mini program QR code image.
 // Returns the image bytes (PNG) or an error.
 func (s *Server) generateWeChatQrCode(scene string) ([]byte, error) {
+	log.Printf("WECHAT QR: generating wxacode for scene=%s", scene)
+
 	accessToken, err := s.getWeChatAccessToken()
 	if err != nil {
 		return nil, fmt.Errorf("get access_token failed: %v", err)
@@ -326,9 +419,13 @@ func (s *Server) generateWeChatQrCode(scene string) ([]byte, error) {
 		return nil, fmt.Errorf("marshal QR code request failed: %v", err)
 	}
 
+	log.Printf("WECHAT QR: request body: %s", string(jsonData))
+
+	start := time.Now()
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(jsonData))
 	if err != nil {
+		log.Printf("WECHAT QR: request FAILED after %v: %v", time.Since(start), err)
 		return nil, fmt.Errorf("request WeChat QR code failed: %v", err)
 	}
 	defer resp.Body.Close()
@@ -337,6 +434,13 @@ func (s *Server) generateWeChatQrCode(scene string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read WeChat QR code response failed: %v", err)
 	}
+
+	log.Printf("WECHAT QR: response received in %v, content-type=%s, body-size=%d bytes, first-bytes=%x",
+		time.Since(start), resp.Header.Get("Content-Type"), len(body), func() string {
+			n := min(8, len(body))
+			return fmt.Sprintf("%x", body[:n])
+		}(),
+	)
 
 	// Check if response is an error (JSON) or an image (PNG)
 	contentType := resp.Header.Get("Content-Type")
@@ -347,12 +451,14 @@ func (s *Server) generateWeChatQrCode(scene string) ([]byte, error) {
 			ErrMsg  string `json:"errmsg"`
 		}
 		if jsonErr := json.Unmarshal(body, &errResp); jsonErr == nil && errResp.ErrCode != 0 {
+			log.Printf("WECHAT QR: ERROR errcode=%d, errmsg=%s", errResp.ErrCode, errResp.ErrMsg)
 			return nil, fmt.Errorf("WeChat QR code error: errcode=%d, errmsg=%s", errResp.ErrCode, errResp.ErrMsg)
 		}
+		log.Printf("WECHAT QR: unexpected JSON response: %s", truncate(string(body), 300))
 		return nil, fmt.Errorf("WeChat QR code returned unexpected JSON: %s", string(body))
 	}
 
-	log.Printf("WeChat QR code generated for scene=%s, size=%d bytes", scene, len(body))
+	log.Printf("WECHAT QR: image generated successfully for scene=%s, size=%d bytes", scene, len(body))
 	return body, nil
 }
 
@@ -375,6 +481,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("USER  created: token=%s...", token[:8])
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"token":     token,
 		"message":   "User created. Keep your token safe — it acts as your account password",
@@ -394,6 +501,7 @@ func (s *Server) handleQrCodeRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.appID == "" || s.appSecret == "" {
+		log.Printf("AUTH  QR code request rejected: WeChat not configured (appID=%q)", s.appID)
 		writeError(w, http.StatusServiceUnavailable, "WeChat auth not configured on server (missing WECHAT_APP_ID / WECHAT_APP_SECRET)")
 		return
 	}
@@ -403,20 +511,23 @@ func (s *Server) handleQrCodeRequest(w http.ResponseWriter, r *http.Request) {
 	// Create auth session in DB
 	scene, err := s.store.CreateAuthSession(sessionTTL)
 	if err != nil {
-		log.Printf("Create auth session failed: %v", err)
+		log.Printf("AUTH  Create auth session failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "Create auth session failed: "+err.Error())
 		return
 	}
+
+	log.Printf("AUTH  QR code session created: scene=%s, ttl=%s", scene, sessionTTL)
 
 	// Try to generate WeChat QR code image
 	var qrcodeBase64 string
 	qrBytes, err := s.generateWeChatQrCode(scene)
 	if err != nil {
-		log.Printf("WeChat QR code generation failed (scene=%s): %v", scene, err)
-		log.Printf("Falling back to pairing code mode — desktop app should display the scene string")
+		log.Printf("AUTH  WeChat QR code generation FAILED (scene=%s): %v", scene, err)
+		log.Printf("AUTH  Falling back to pairing code mode — desktop will display scene string")
 		// qrcodeBase64 stays empty — desktop app will use scene as pairing code
 	} else {
 		qrcodeBase64 = "data:image/png;base64," + encodeBase64(qrBytes)
+		log.Printf("AUTH  QR code image generated for scene=%s, base64-size=%d bytes", scene, len(qrcodeBase64))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -443,9 +554,13 @@ func (s *Server) handleQrCodeStatus(w http.ResponseWriter, r *http.Request) {
 
 	sess, err := s.store.GetAuthSession(scene)
 	if err != nil {
+		log.Printf("AUTH  QR status poll: scene=%s → not found/expired", scene)
 		writeError(w, http.StatusNotFound, "Session not found or expired")
 		return
 	}
+
+	log.Printf("AUTH  QR status poll: scene=%s, status=%s, hasToken=%v",
+		scene, sess.Status, sess.Token != "")
 
 	response := map[string]interface{}{
 		"status": sess.Status,
@@ -482,9 +597,13 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 		Scene string `json:"scene"` // scene from QR code / pairing code
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
+		log.Printf("AUTH  WeChat login: JSON parse failed: %v", err)
 		writeError(w, http.StatusBadRequest, "JSON parse failed: "+err.Error())
 		return
 	}
+
+	log.Printf("AUTH  WeChat login request: code=%s..., scene=%s",
+		req.Code[:min(8, len(req.Code))], req.Scene)
 
 	if req.Code == "" {
 		writeError(w, http.StatusBadRequest, "Missing code parameter (from wx.login)")
@@ -498,15 +617,19 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 	// Verify the auth session exists and is still pending
 	sess, err := s.store.GetAuthSession(req.Scene)
 	if err != nil {
+		log.Printf("AUTH  WeChat login: scene=%s → session not found", req.Scene)
 		writeError(w, http.StatusNotFound, "Session not found or expired, please request a new QR code")
 		return
 	}
 	if sess.Status == "expired" || time.Now().Unix() > sess.ExpiresAt {
+		log.Printf("AUTH  WeChat login: scene=%s → session expired (status=%s, expiresAt=%d, now=%d)",
+			req.Scene, sess.Status, sess.ExpiresAt, time.Now().Unix())
 		writeError(w, http.StatusGone, "Session expired, please request a new QR code")
 		return
 	}
 	if sess.Status == "scanned" {
-		// Already scanned — return the existing token
+		log.Printf("AUTH  WeChat login: scene=%s → already scanned, returning existing token=%s...",
+			req.Scene, sess.Token[:min(8, len(sess.Token))])
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"token":   sess.Token,
 			"message": "Already logged in",
@@ -517,12 +640,13 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 	// Exchange code for openid via WeChat API
 	code2SessionResp, err := s.code2Session(req.Code)
 	if err != nil {
-		log.Printf("WeChat code2Session failed: %v", err)
+		log.Printf("AUTH  WeChat login: code2Session failed for scene=%s: %v", req.Scene, err)
 		writeError(w, http.StatusBadGateway, "WeChat login failed: "+err.Error())
 		return
 	}
 
 	if code2SessionResp.OpenID == "" {
+		log.Printf("AUTH  WeChat login: code2Session returned empty openid for scene=%s", req.Scene)
 		writeError(w, http.StatusBadGateway, "WeChat returned empty openid")
 		return
 	}
@@ -530,19 +654,20 @@ func (s *Server) handleWeChatLogin(w http.ResponseWriter, r *http.Request) {
 	// Find or create user by openid
 	token, err := s.store.FindOrCreateUserByOpenID(code2SessionResp.OpenID)
 	if err != nil {
-		log.Printf("FindOrCreateUser failed: %v", err)
+		log.Printf("AUTH  WeChat login: FindOrCreateUser failed for openid=%s...: %v",
+			code2SessionResp.OpenID[:min(8, len(code2SessionResp.OpenID))], err)
 		writeError(w, http.StatusInternalServerError, "User creation failed: "+err.Error())
 		return
 	}
 
 	// Complete the auth session — bind token to scene so desktop can pick it up
 	if err := s.store.CompleteAuthSession(req.Scene, token, code2SessionResp.OpenID); err != nil {
-		log.Printf("CompleteAuthSession failed: %v", err)
+		log.Printf("AUTH  WeChat login: CompleteAuthSession failed for scene=%s: %v", req.Scene, err)
 		writeError(w, http.StatusInternalServerError, "Complete auth session failed: "+err.Error())
 		return
 	}
 
-	log.Printf("WeChat login success: openid=%s..., scene=%s, token=%s...",
+	log.Printf("AUTH  WeChat login SUCCESS: openid=%s..., scene=%s, token=%s...",
 		code2SessionResp.OpenID[:min(8, len(code2SessionResp.OpenID))],
 		req.Scene,
 		token[:8],
@@ -568,6 +693,9 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
+	log.Printf("SYNC  status: token=%s..., words=%d, lastSync=%d",
+		token[:min(8, len(token))], status.WordCount, status.LastSync)
 
 	writeJSON(w, http.StatusOK, status)
 }
@@ -609,12 +737,16 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("SYNC  push: token=%s..., entries=%d", token[:min(8, len(token))], len(req.Entries))
+
 	upserted, err := s.store.PushEntries(token, req.Entries)
 	if err != nil {
-		log.Printf("Push failed: %v", err)
+		log.Printf("SYNC  push FAILED: token=%s..., error=%v", token[:min(8, len(token))], err)
 		writeError(w, http.StatusInternalServerError, "Push failed: "+err.Error())
 		return
 	}
+
+	log.Printf("SYNC  push OK: token=%s..., total=%d, upserted=%d", token[:min(8, len(token))], len(req.Entries), upserted)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"upserted": upserted,
@@ -644,7 +776,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.store.PullEntries(token, since)
 	if err != nil {
-		log.Printf("Pull failed: %v", err)
+		log.Printf("SYNC  pull FAILED: token=%s..., since=%d, error=%v", token[:min(8, len(token))], since, err)
 		writeError(w, http.StatusInternalServerError, "Pull failed: "+err.Error())
 		return
 	}
@@ -652,6 +784,9 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []SyncEntry{}
 	}
+
+	log.Printf("SYNC  pull OK: token=%s..., since=%d, returned=%d entries",
+		token[:min(8, len(token))], since, len(entries))
 
 	writeJSON(w, http.StatusOK, SyncPullResponse{
 		Entries:   entries,
@@ -690,7 +825,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("SYNC  delete: token=%s..., id=%s", token[:min(8, len(token))], req.ID)
+
 	if err := s.store.DeleteEntry(token, req.ID); err != nil {
+		log.Printf("SYNC  delete FAILED: token=%s..., id=%s, error=%v", token[:min(8, len(token))], req.ID, err)
 		writeError(w, http.StatusInternalServerError, "Delete failed: "+err.Error())
 		return
 	}
@@ -734,4 +872,12 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // encodeBase64 returns a base64 encoding of the input bytes.
 func encodeBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
+}
+
+// truncate truncates a string to n characters with ellipsis
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
