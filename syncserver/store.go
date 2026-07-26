@@ -43,6 +43,16 @@ type SyncStatusResponse struct {
 	CreatedAt int64  `json:"createdAt"` // Account creation time
 }
 
+// AuthSession represents a pending QR-code login session
+type AuthSession struct {
+	Scene     string `json:"scene"`     // Random 8-char scene parameter
+	Status    string `json:"status"`    // pending | scanned | expired
+	Token     string `json:"token"`     // Bound token (set when scanned)
+	OpenID    string `json:"openid"`    // Bound openid (set when scanned)
+	CreatedAt int64  `json:"createdAt"` // Unix timestamp
+	ExpiresAt int64  `json:"expiresAt"` // Unix timestamp when session expires
+}
+
 // Store manages the SQLite database for sync data
 type Store struct {
 	db *sql.DB
@@ -130,7 +140,52 @@ func (s *Store) migrate() error {
 		log.Printf("Warning: create index failed: %v", err)
 	}
 
+	// Auth sessions table (for QR code login flow)
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS auth_sessions (
+			scene      TEXT PRIMARY KEY,
+			status     TEXT NOT NULL DEFAULT 'pending',
+			token      TEXT NOT NULL DEFAULT '',
+			openid     TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+			expires_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("创建 auth_sessions 表失败: %v", err)
+	}
+
+	// Add openid column to users table if not exists (migration for existing DBs)
+	s.migrateAddColumn("users", "openid", "TEXT NOT NULL DEFAULT ''")
+
+	// Unique index on openid for user lookup
+	if _, err := s.db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_openid
+		ON users(openid) WHERE openid != ''
+	`); err != nil {
+		log.Printf("Warning: create openid index failed: %v", err)
+	}
+
+	// Clean up expired auth sessions
+	s.cleanExpiredAuthSessions()
+
 	return nil
+}
+
+// migrateAddColumn adds a column to a table if it doesn't already exist.
+func (s *Store) migrateAddColumn(table, column, definition string) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
+		table, column,
+	).Scan(&count)
+	if err == nil && count == 0 {
+		_, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+		if err != nil {
+			log.Printf("Warning: add column %s.%s failed: %v", table, column, err)
+		} else {
+			log.Printf("Migration: added column %s.%s", table, column)
+		}
+	}
 }
 
 // Close closes the database
@@ -391,4 +446,167 @@ func (s *Store) CleanDeleted(olderThan time.Duration) (int, error) {
 	}
 	affected, _ := result.RowsAffected()
 	return int(affected), nil
+}
+
+// ============================================================
+// Auth Session methods (QR code login flow)
+// ============================================================
+
+// GenerateScene creates a random 8-character scene string (uppercase + digits)
+func GenerateScene() (string, error) {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("生成scene失败: %v", err)
+	}
+	for i := range b {
+		b[i] = charset[b[i]%byte(len(charset))]
+	}
+	return string(b), nil
+}
+
+// CreateAuthSession creates a new auth session with a random scene value.
+// Returns the scene string. The session expires after ttl.
+func (s *Store) CreateAuthSession(ttl time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	scene, err := GenerateScene()
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now().Unix()
+	expiresAt := now + int64(ttl.Seconds())
+
+	_, err = s.db.Exec(
+		"INSERT INTO auth_sessions (scene, status, token, openid, created_at, expires_at) VALUES (?, 'pending', '', '', ?, ?)",
+		scene, now, expiresAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("创建auth session失败: %v", err)
+	}
+
+	log.Printf("Auth session created: scene=%s, expires_in=%ds", scene, int(ttl.Seconds()))
+	return scene, nil
+}
+
+// GetAuthSession returns the auth session by scene.
+// Returns nil if not found or expired.
+func (s *Store) GetAuthSession(scene string) (*AuthSession, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var sess AuthSession
+	err := s.db.QueryRow(
+		"SELECT scene, status, token, openid, created_at, expires_at FROM auth_sessions WHERE scene = ?",
+		scene,
+	).Scan(&sess.Scene, &sess.Status, &sess.Token, &sess.OpenID, &sess.CreatedAt, &sess.ExpiresAt)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query auth session failed: %v", err)
+	}
+
+	// Check expiration
+	if time.Now().Unix() > sess.ExpiresAt {
+		sess.Status = "expired"
+	}
+
+	return &sess, nil
+}
+
+// CompleteAuthSession marks an auth session as scanned and binds it to a user token.
+func (s *Store) CompleteAuthSession(scene, token, openid string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Verify session exists and is still pending
+	var status string
+	var expiresAt int64
+	err := s.db.QueryRow(
+		"SELECT status, expires_at FROM auth_sessions WHERE scene = ?",
+		scene,
+	).Scan(&status, &expiresAt)
+
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("session not found")
+	}
+	if err != nil {
+		return fmt.Errorf("query session failed: %v", err)
+	}
+	if time.Now().Unix() > expiresAt {
+		return fmt.Errorf("session expired")
+	}
+
+	_, err = s.db.Exec(
+		"UPDATE auth_sessions SET status = 'scanned', token = ?, openid = ? WHERE scene = ?",
+		token, openid, scene,
+	)
+	if err != nil {
+		return fmt.Errorf("update auth session failed: %v", err)
+	}
+
+	log.Printf("Auth session completed: scene=%s, token=%s..., openid=%s...", scene, token[:8], openid[:min(8, len(openid))])
+	return nil
+}
+
+// FindOrCreateUserByOpenID finds an existing user by openid, or creates a new one.
+// Returns the user's token.
+func (s *Store) FindOrCreateUserByOpenID(openid string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Try to find existing user by openid
+	var token string
+	err := s.db.QueryRow(
+		"SELECT token FROM users WHERE openid = ?",
+		openid,
+	).Scan(&token)
+
+	if err == nil {
+		// Existing user found
+		log.Printf("Existing user found for openid=%s..., token=%s...", openid[:min(8, len(openid))], token[:8])
+		return token, nil
+	}
+
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("query user by openid failed: %v", err)
+	}
+
+	// Create new user
+	newToken, err := GenerateToken()
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now().Unix()
+	_, err = s.db.Exec(
+		"INSERT INTO users (token, openid, created_at, last_sync) VALUES (?, ?, ?, ?)",
+		newToken, openid, now, now,
+	)
+	if err != nil {
+		return "", fmt.Errorf("create user for openid failed: %v", err)
+	}
+
+	log.Printf("New user created for openid=%s..., token=%s...", openid[:min(8, len(openid))], newToken[:8])
+	return newToken, nil
+}
+
+// cleanExpiredAuthSessions removes expired auth sessions from the database.
+func (s *Store) cleanExpiredAuthSessions() {
+	now := time.Now().Unix()
+	result, err := s.db.Exec(
+		"DELETE FROM auth_sessions WHERE expires_at < ?",
+		now,	)
+	if err != nil {
+		log.Printf("Warning: clean expired auth sessions failed: %v", err)
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		log.Printf("Cleaned %d expired auth sessions", affected)
+	}
 }

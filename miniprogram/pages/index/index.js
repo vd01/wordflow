@@ -9,12 +9,12 @@ function formatSyncTime(ts) {
   const now = new Date()
   const diffMs = now - d
   const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return diffMin + ' 分钟前'
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return diffMin + ' min ago'
   const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return diffHr + ' 小时前'
+  if (diffHr < 24) return diffHr + ' hr ago'
   const diffDay = Math.floor(diffHr / 24)
-  if (diffDay < 7) return diffDay + ' 天前'
+  if (diffDay < 7) return diffDay + ' days ago'
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
@@ -43,15 +43,29 @@ Page({
     wordCount: 0,
     dueCount: 0,
     lastSyncDisplay: '',
-    offline: false
+    offline: false,
+    // QR code login state
+    loggedIn: false,       // whether user has a valid token
+    pairingCode: '',       // scene/pairing code displayed on desktop
+    loginBusy: false       // login in progress
   },
 
   onLoad() {
     this.setData({
       serverAddr: app.globalData.serverAddr,
       token: app.globalData.token,
+      loggedIn: !!(app.globalData.serverAddr && app.globalData.token),
       ...refreshCounts()
     })
+
+    // Check if we were launched from a QR code scan (scene parameter)
+    const pendingScene = app.globalData.pendingScene
+    if (pendingScene) {
+      // Consume the pending scene
+      app.globalData.pendingScene = null
+      // Auto-trigger login with the scene
+      this.handleSceneLogin(pendingScene)
+    }
 
     // Wait for app's auto-sync to finish, then refresh UI
     if (app.globalData.syncPromise) {
@@ -59,7 +73,7 @@ Page({
         if (result) {
           this.setData({
             ...refreshCounts(),
-            status: result.changed > 0 ? ('已同步 ' + result.changed + ' 条') : ''
+            status: result.changed > 0 ? ('Synced ' + result.changed + ' entries') : ''
           })
         }
       })
@@ -68,14 +82,17 @@ Page({
     this.checkNetwork()
     wx.onNetworkStatusChange((res) => {
       this.setData({ offline: !res.isConnected })
-      if (res.isConnected && this.data.serverAddr) {
+      if (res.isConnected && this.data.serverAddr && this.data.token) {
         this.doSync()
       }
     })
   },
 
   onShow() {
-    this.setData({ ...refreshCounts() })
+    this.setData({
+      ...refreshCounts(),
+      loggedIn: !!(app.globalData.serverAddr && app.globalData.token)
+    })
   },
 
   checkNetwork() {
@@ -89,44 +106,95 @@ Page({
   },
 
   onAddr(e) { this.setData({ serverAddr: e.detail.value }) },
-  onToken(e) { this.setData({ token: e.detail.value }) },
   onDailyLimit(e) {
     const n = parseInt(e.detail.value, 10) || 0
     this.setData({ dailyLimit: n })
     store.setDailyLimit(n)
   },
 
-  save() {
+  // Save server address only (token comes from login now)
+  saveAddr() {
     if (!this.data.serverAddr) {
-      this.setData({ status: '请填写服务器地址' }); return
+      this.setData({ status: 'Please enter server address' }); return
     }
-    app.setConfig(this.data.serverAddr, this.data.token)
-    this.setData({ status: '配置已保存' })
+    app.setConfig(this.data.serverAddr, app.globalData.token || '')
+    this.setData({ status: 'Server address saved' })
   },
 
+  // Handle login when user scans QR code and mini program opens with scene
+  async handleSceneLogin(scene) {
+    if (!this.data.serverAddr) {
+      this.setData({ status: 'Please configure server address first' })
+      return
+    }
+
+    this.setData({ loginBusy: true, status: 'Logging in via WeChat...', pairingCode: scene })
+    try {
+      const token = await app.doWeChatLogin(scene)
+      this.setData({
+        token: token,
+        loggedIn: true,
+        status: 'Login successful! Syncing...',
+        pairingCode: ''
+      })
+      // Trigger initial sync
+      this.doSync()
+    } catch (e) {
+      this.setData({
+        status: 'Login failed: ' + e.message,
+        pairingCode: ''
+      })
+    } finally {
+      this.setData({ loginBusy: false })
+    }
+  },
+
+  // Manual pairing code input (fallback if QR code scan doesn't work)
+  onPairingCode(e) {
+    this.setData({ pairingCode: e.detail.value.toUpperCase() })
+  },
+
+  // Login with manually entered pairing code
+  async loginWithCode() {
+    const scene = this.data.pairingCode.trim()
+    if (!scene) {
+      this.setData({ status: 'Please enter the pairing code from desktop app' })
+      return
+    }
+    if (!this.data.serverAddr) {
+      this.setData({ status: 'Please configure server address first' })
+      return
+    }
+    await this.handleSceneLogin(scene)
+  },
+
+  // Test connection
   async testConn() {
     if (!this.data.serverAddr) {
-      this.setData({ status: '请填写服务器地址' }); return
+      this.setData({ status: 'Please enter server address' }); return
     }
     if (this.data.offline) {
-      this.setData({ status: '当前无网络连接' }); return
+      this.setData({ status: 'No network connection' }); return
     }
-    this.setData({ busy: true, status: '测试中…' })
+    this.setData({ busy: true, status: 'Testing...' })
     try {
       const h = await sync.health(this.data.serverAddr)
-      let status = '连接正常: ' + (h.service || 'wordwise-sync') + ' v' + (h.version || '?')
+      let status = 'Connected: ' + (h.service || 'wordwise-sync') + ' v' + (h.version || '?')
+      if (h.wechat) {
+        status += ' (WeChat auth enabled)'
+      }
       if (this.data.token) {
         try {
           const st = await sync.getStatus(this.data.serverAddr, this.data.token)
-          status += ' | 远程单词 ' + st.wordCount + ' 条'
+          status += ' | Remote words: ' + st.wordCount
           this.setData({ wordCount: st.wordCount, lastSyncDisplay: formatSyncTime(st.lastSync) })
         } catch (e) {
-          status += ' | Token 验证失败: ' + e.message
+          status += ' | Token invalid: ' + e.message
         }
       }
       this.setData({ status })
     } catch (e) {
-      this.setData({ status: '连接失败: ' + e.message })
+      this.setData({ status: 'Connection failed: ' + e.message })
     } finally {
       this.setData({ busy: false })
     }
@@ -137,16 +205,16 @@ Page({
     const { serverAddr, token, offline } = this.data
     if (!serverAddr || !token || offline) return
 
-    this.setData({ busy: true, status: '同步中…' })
+    this.setData({ busy: true, status: 'Syncing...' })
     try {
       const res = await sync.pull(serverAddr, token, since !== undefined ? since : (store.getLastSync() || 0))
       const r = store.mergePulled(res.entries || [], res.serverNow)
       this.setData({
-        status: '已同步 ' + r.changed + ' 条，本地共 ' + r.total + ' 条',
+        status: 'Synced ' + r.changed + ' entries, local total: ' + r.total,
         ...refreshCounts()
       })
     } catch (e) {
-      this.setData({ status: '同步失败: ' + e.message })
+      this.setData({ status: 'Sync failed: ' + e.message })
     } finally {
       this.setData({ busy: false })
     }
@@ -163,7 +231,7 @@ Page({
   goReview() {
     const dueCount = fsrsEngine.getQueueCounts(store.getWords(), store.getReviews()).total
     if (dueCount === 0) {
-      wx.showToast({ title: '暂无待复习单词', icon: 'none' }); return
+      wx.showToast({ title: 'No words to review', icon: 'none' }); return
     }
     wx.navigateTo({ url: '/pages/review/review' })
   }

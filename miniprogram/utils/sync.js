@@ -26,9 +26,9 @@ function request({ url, method, header, data, timeout }) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data)
         } else if (res.statusCode === 401) {
-          reject(new Error('Token 无效或已过期，请重新配置'))
+          reject(new Error('Token invalid or expired, please re-login'))
         } else if (res.statusCode === 429) {
-          reject(new Error('请求过于频繁，请稍后再试'))
+          reject(new Error('Too many requests, please try again later'))
         } else {
           const msg = (res.data && res.data.error) ? res.data.error : ('HTTP ' + res.statusCode)
           reject(new Error(msg))
@@ -37,9 +37,9 @@ function request({ url, method, header, data, timeout }) {
       fail: (err) => {
         const msg = err.errMsg || ''
         if (msg.indexOf('url not in domain list') >= 0) {
-          reject(new Error('域名未加入白名单，请检查服务器地址或开启开发模式'))
+          reject(new Error('Domain not whitelisted, check server address or enable dev mode'))
         } else if (msg.indexOf('timeout') >= 0 || msg.indexOf('request:fail') >= 0) {
-          reject(new Error('网络连接失败，请检查网络或服务器地址'))
+          reject(new Error('Network connection failed, check network or server address'))
         } else {
           reject(new Error(msg || 'request failed'))
         }
@@ -65,4 +65,16 @@ function pull(serverAddr, token, since) {
   return request({ url: base(serverAddr) + '/api/v1/sync/pull' + q, header: authHeader(token) })
 }
 
-module.exports = { health, getStatus, pull, base, authHeader }
+// POST /api/v1/auth/wechat/login  (public)
+// Called by the mini program after wx.login() to authenticate with the server.
+// { code: wx_login_code, scene: scene_from_qrcode }
+// Returns: { token, message }
+function wechatLogin(serverAddr, code, scene) {
+  return request({
+    url: base(serverAddr) + '/api/v1/auth/wechat/login',
+    method: 'POST',
+    data: { code: code, scene: scene }
+  })
+}
+
+module.exports = { health, getStatus, pull, wechatLogin, base, authHeader }

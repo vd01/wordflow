@@ -14,10 +14,14 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":9274", "服务器监听地址")
-	dbPath := flag.String("db", "", "数据库文件路径 (默认: 用户配置目录/WordWise/sync.db)")
-	clean := flag.Bool("clean", false, "启动时清理30天前的已删除记录")
+	addr := flag.String("addr", ":9274", "Server listen address")
+	dbPath := flag.String("db", "", "Database file path (default: UserConfigDir/WordWise/sync.db)")
+	clean := flag.Bool("clean", false, "Clean soft-deleted entries older than 30 days on startup")
 	flag.Parse()
+
+	// WeChat Mini Program credentials (from environment variables)
+	appID := os.Getenv("WECHAT_APP_ID")
+	appSecret := os.Getenv("WECHAT_APP_SECRET")
 
 	// Default database path
 	if *dbPath == "" {
@@ -29,18 +33,23 @@ func main() {
 	}
 
 	fmt.Println("╔══════════════════════════════════════════╗")
-	fmt.Println("║     WordWise Sync Server v1.0.0          ║")
-	fmt.Println("║     英语词典助手 - 多设备同步服务         ║")
+	fmt.Println("║     WordWise Sync Server v1.1.0          ║")
+	fmt.Println("║     English Dictionary - Multi-device    ║")
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()
-	fmt.Printf("  数据库: %s\n", *dbPath)
-	fmt.Printf("  监听地址: %s\n", *addr)
+	fmt.Printf("  Database: %s\n", *dbPath)
+	fmt.Printf("  Listen:   %s\n", *addr)
+	if appID != "" {
+		fmt.Printf("  WeChat:   AppID=%s (QR code auth enabled)\n", appID)
+	} else {
+		fmt.Printf("  WeChat:   (not configured, set WECHAT_APP_ID + WECHAT_APP_SECRET)\n")
+	}
 	fmt.Println()
 
 	// Open store
 	store, err := syncserver.NewStore(*dbPath)
 	if err != nil {
-		log.Fatalf("❌ 打开数据库失败: %v", err)
+		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer store.Close()
 
@@ -48,22 +57,22 @@ func main() {
 	if *clean {
 		deleted, err := store.CleanDeleted(30 * 24 * time.Hour)
 		if err != nil {
-			log.Printf("⚠️ 清理失败: %v", err)
+			log.Printf("Cleanup failed: %v", err)
 		} else if deleted > 0 {
-			log.Printf("🧹 已清理 %d 条过期删除记录", deleted)
+			log.Printf("Cleaned %d expired deleted entries", deleted)
 		}
 	}
 
 	// Start server
-	srv := syncserver.NewServer(store, *addr)
+	srv := syncserver.NewServer(store, *addr, appID, appSecret)
 
 	go func() {
 		if err := srv.Start(); err != nil {
-			log.Fatalf("❌ 服务器启动失败: %v", err)
+			log.Fatalf("Server start failed: %v", err)
 		}
 	}()
 
-	fmt.Println("✅ 服务器已启动，按 Ctrl+C 停止")
+	fmt.Println("Server started, press Ctrl+C to stop")
 	fmt.Println()
 
 	// Wait for interrupt signal
@@ -72,7 +81,7 @@ func main() {
 	<-quit
 
 	fmt.Println()
-	fmt.Println("🛑 正在关闭服务器...")
+	fmt.Println("Shutting down server...")
 	srv.Shutdown()
-	fmt.Println("👋 服务器已停止")
+	fmt.Println("Server stopped")
 }

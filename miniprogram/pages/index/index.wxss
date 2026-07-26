@@ -17,3 +17,8 @@
 .btn-accent {
   background: #27ae60;
 }
+.section-title {
+  font-size: 30rpx;
+  font-weight: bold;
+  margin-bottom: 12rpx;
+}

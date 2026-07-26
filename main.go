@@ -1860,15 +1860,16 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 }
 
 // ============================================================
-// SyncService - PC端同步客户端（连接远程同步服务器）
+// SyncService - PC sync client (connects to remote sync server)
+// Supports both legacy token auth and WeChat QR code login
 // ============================================================
 
 type SyncService struct {
-	history       *HistoryService
-	syncAddr      string // 远程同步服务器地址，如 http://your-server:9274
-	syncToken     string // 用户Token（由服务器分配）
-	autoSync      bool   // 是否启用自动同步
-	lastSyncTime  int64  // Unix timestamp of last successful sync (for incremental pull)
+	history      *HistoryService
+	syncAddr     string // Remote sync server address, e.g. http://your-server:9274
+	syncToken    string // User Token (assigned by server via QR code login or legacy create)
+	autoSync     bool   // Whether auto-sync is enabled
+	lastSyncTime int64  // Unix timestamp of last successful sync (for incremental pull)
 }
 
 func (s *SyncService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
@@ -1943,19 +1944,32 @@ func (s *SyncService) SaveSyncConfig(syncAddr, syncToken string, autoSync bool) 
 // Returns a human-readable status message.
 func (s *SyncService) TestConnection() (string, error) {
 	if s.syncAddr == "" {
-		return "", fmt.Errorf("请先设置同步服务器地址")
+		return "", fmt.Errorf("please set sync server address first")
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/health"
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("无法连接服务器: %v", err)
+		return "", fmt.Errorf("cannot connect to server: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("服务器返回异常状态: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("server returned abnormal status: HTTP %d", resp.StatusCode)
+	}
+
+	var healthResult struct {
+		Status  string `json:"status"`
+		Service string `json:"service"`
+		Version string `json:"version"`
+		Wechat  bool   `json:"wechat"`
+	}
+	json.NewDecoder(resp.Body).Decode(&healthResult)
+
+	status := fmt.Sprintf("Connected: %s v%s", healthResult.Service, healthResult.Version)
+	if healthResult.Wechat {
+		status += " (WeChat auth enabled)"
 	}
 
 	// If token is set, also check user status
@@ -1965,39 +1979,132 @@ func (s *SyncService) TestConnection() (string, error) {
 		req.Header.Set("Authorization", "Bearer "+s.syncToken)
 		resp2, err := client.Do(req)
 		if err != nil {
-			return "服务器可达，但Token验证失败", nil
+			return status + " | Token validation failed", nil
 		}
 		defer resp2.Body.Close()
 
 		if resp2.StatusCode == 200 {
-			var status syncserver.SyncStatusResponse
-			if json.NewDecoder(resp2.Body).Decode(&status) == nil {
-				return fmt.Sprintf("✅ 连接成功！已同步 %d 个单词", status.WordCount), nil
+			var syncStatus syncserver.SyncStatusResponse
+			if json.NewDecoder(resp2.Body).Decode(&syncStatus) == nil {
+				return fmt.Sprintf("%s | Synced %d words", status, syncStatus.WordCount), nil
 			}
 		}
-		return "⚠️ 服务器可达，但Token无效（可能需要重新获取Token）", nil
+		return status + " | Token invalid (re-login needed)", nil
 	}
 
-	return "✅ 服务器连接正常，请设置Token后开始同步", nil
+	return status + " | Not logged in yet", nil
 }
 
-// CreateUser creates a new user on the remote server and returns the token.
+// RequestQrCode requests a QR code login session from the sync server.
+// Returns a map with "scene", "expiresIn", and optionally "qrcode" (base64 PNG data URL).
+// The desktop app should display the QR code image (or the scene string as fallback)
+// and then poll with PollQrCodeStatus until the user scans it.
+func (s *SyncService) RequestQrCode() (map[string]interface{}, error) {
+	if s.syncAddr == "" {
+		return nil, fmt.Errorf("please set sync server address first")
+	}
+
+	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/qrcode/request"
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(url, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &errResp) == nil {
+			return nil, fmt.Errorf("WeChat auth not available: %s", errResp.Error)
+		}
+		return nil, fmt.Errorf("WeChat auth not configured on server")
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("server error (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse response failed: %v", err)
+	}
+
+	log.Printf("SyncService: QR code requested, scene=%v, expiresIn=%v",
+		result["scene"], result["expiresIn"])
+
+	return result, nil
+}
+
+// PollQrCodeStatus polls the sync server for QR code login status.
+// Returns a map with "status" ("pending" | "scanned" | "expired") and
+// optionally "token" (when status is "scanned").
+// If the user has scanned the QR code, this method auto-saves the token.
+func (s *SyncService) PollQrCodeStatus(scene string) (map[string]interface{}, error) {
+	if s.syncAddr == "" {
+		return nil, fmt.Errorf("please set sync server address first")
+	}
+	if scene == "" {
+		return nil, fmt.Errorf("scene parameter is required")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/auth/qrcode/status?scene=%s",
+		strings.TrimRight(s.syncAddr, "/"), scene)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("poll failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return map[string]interface{}{"status": "expired"}, nil
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("server error (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse response failed: %v", err)
+	}
+
+	// Auto-save token if login is complete
+	if status, ok := result["status"].(string); ok && status == "scanned" {
+		if token, ok := result["token"].(string); ok && token != "" {
+			s.syncToken = token
+			s.saveConfig()
+			log.Printf("SyncService: QR code login complete, token saved")
+		}
+	}
+
+	return result, nil
+}
+
+// CreateUser creates a new user on the remote server and returns the token (legacy).
 func (s *SyncService) CreateUser() (string, error) {
 	if s.syncAddr == "" {
-		return "", fmt.Errorf("请先设置同步服务器地址")
+		return "", fmt.Errorf("please set sync server address first")
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/user/create"
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(url, "application/json", strings.NewReader("{}"))
 	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
+		return "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("创建用户失败 (HTTP %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("create user failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -2005,7 +2112,7 @@ func (s *SyncService) CreateUser() (string, error) {
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("解析响应失败: %v", err)
+		return "", fmt.Errorf("parse response failed: %v", err)
 	}
 
 	// Auto-save the token
@@ -2018,15 +2125,15 @@ func (s *SyncService) CreateUser() (string, error) {
 // PushToServer pushes all local history entries to the remote sync server.
 func (s *SyncService) PushToServer() (string, error) {
 	if s.syncAddr == "" || s.syncToken == "" {
-		return "", fmt.Errorf("请先配置同步服务器地址和Token")
+		return "", fmt.Errorf("please configure sync server address and token first")
 	}
 	if s.history == nil {
-		return "", fmt.Errorf("历史服务未初始化")
+		return "", fmt.Errorf("history service not initialized")
 	}
 
 	entries := s.history.GetAllEntriesForSync()
 	if len(entries) == 0 {
-		return "没有可同步的数据", nil
+		return "No data to sync", nil
 	}
 
 	// Convert to sync entries
@@ -2044,13 +2151,13 @@ func (s *SyncService) PushToServer() (string, error) {
 	reqBody := syncserver.SyncPushRequest{Entries: syncEntries}
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("构建请求失败: %v", err)
+		return "", fmt.Errorf("build request failed: %v", err)
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/sync/push"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %v", err)
+		return "", fmt.Errorf("create request failed: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
@@ -2058,25 +2165,25 @@ func (s *SyncService) PushToServer() (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
+		return "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("Token无效，请重新获取")
+		return "", fmt.Errorf("token invalid, please re-login")
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("服务器返回错误: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("server error: HTTP %d", resp.StatusCode)
 	}
 
 	var result map[string]interface{}
 	if json.NewDecoder(resp.Body).Decode(&result) == nil {
 		if upserted, ok := result["upserted"]; ok {
-			return fmt.Sprintf("成功推送 %v 条记录", upserted), nil
+			return fmt.Sprintf("Pushed %v entries", upserted), nil
 		}
 	}
 
-	return "推送完成", nil
+	return "Push complete", nil
 }
 
 // PullFromServer pulls entries from the remote sync server and merges into local history.
@@ -2088,10 +2195,10 @@ func (s *SyncService) PullFromServer() (string, error) {
 
 func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 	if s.syncAddr == "" || s.syncToken == "" {
-		return "", fmt.Errorf("请先配置同步服务器地址和Token")
+		return "", fmt.Errorf("please configure sync server address and token first")
 	}
 	if s.history == nil {
-		return "", fmt.Errorf("历史服务未初始化")
+		return "", fmt.Errorf("history service not initialized")
 	}
 
 	// Build URL with ?since= for incremental sync
@@ -2106,27 +2213,27 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %v", err)
+		return "", fmt.Errorf("create request failed: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
+		return "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("Token无效，请重新获取")
+		return "", fmt.Errorf("token invalid, please re-login")
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("服务器返回错误: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("server error: HTTP %d", resp.StatusCode)
 	}
 
 	var result syncserver.SyncPullResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("解析响应失败: %v", err)
+		return "", fmt.Errorf("parse response failed: %v", err)
 	}
 
 	if len(result.Entries) == 0 {
@@ -2135,7 +2242,7 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 			s.lastSyncTime = result.ServerNow
 			s.saveConfig()
 		}
-		return "服务器上没有新数据", nil
+		return "No new data on server", nil
 	}
 
 	// Merge into local history (using AddHistoryFromSync to avoid push-back loop)
@@ -2157,7 +2264,7 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 
 	log.Printf("SyncService: pulled %d entries (since=%d, serverNow=%d)", merged, since, result.ServerNow)
 
-	return fmt.Sprintf("成功拉取并合并 %d 条记录", merged), nil
+	return fmt.Sprintf("Pulled and merged %d entries", merged), nil
 }
 
 // OnEntryAdded is called by HistoryService when a new entry is saved.

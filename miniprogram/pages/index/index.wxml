@@ -1,37 +1,49 @@
 <view class="container">
   <!-- Offline banner -->
   <view class="offline-banner" wx:if="{{offline}}">
-    📴 无网络连接 — 仅可复习本地单词
+    📴 No network — local review only
   </view>
 
   <view class="card">
-    <view class="muted">服务器地址（https + 已备案域名）</view>
+    <view class="muted">Server address (https + registered domain)</view>
     <input class="input" value="{{serverAddr}}" bindinput="onAddr"
       placeholder="https://vocab-agent.duckdns.org:31588/" />
+    <view class="btn" bindtap="saveAddr">Save address</view>
+    <view class="btn" bindtap="testConn" disabled="{{busy || offline}}">Test connection</view>
+  </view>
 
-    <view class="muted" style="margin-top:20rpx">同步 Token</view>
-    <input class="input" value="{{token}}" bindinput="onToken"
-      placeholder="粘贴你的同步 token" password="{{true}}" />
+  <!-- Login section: shown when not logged in -->
+  <view class="card" wx:if="{{!loggedIn}}">
+    <view class="section-title">🔐 WeChat Login</view>
+    <view class="muted">Scan the QR code on your desktop app, or enter the pairing code manually:</view>
+    <input class="input" value="{{pairingCode}}" bindinput="onPairingCode"
+      placeholder="Enter pairing code (e.g. A3F8K2M1)" maxlength="8" />
+    <view class="btn btn-accent" bindtap="loginWithCode" disabled="{{loginBusy || offline || !pairingCode}}">
+      {{loginBusy ? 'Logging in...' : 'Login with pairing code'}}
+    </view>
+  </view>
 
-    <view class="btn" bindtap="save">保存配置</view>
-    <view class="btn" bindtap="testConn" disabled="{{busy || offline}}">测试连接</view>
-    <view class="btn" bindtap="pullAll" disabled="{{busy || offline}}">拉取全部单词</view>
+  <!-- Logged in section: shown when token is set -->
+  <view class="card" wx:if="{{loggedIn}}">
+    <view class="section-title">✅ Sync Connected</view>
+    <view class="muted">Token: {{token.substring(0, 8)}}...</view>
+    <view class="btn" bindtap="pullAll" disabled="{{busy || offline}}">Pull all words</view>
   </view>
 
   <view class="card">
-    <view>本地单词：{{wordCount}}</view>
-    <view style="margin-top:8rpx">待复习：{{dueCount}}</view>
-    <view class="muted" style="margin-top:8rpx">上次同步：{{lastSyncDisplay || '从未'}}</view>
+    <view>Local words: {{wordCount}}</view>
+    <view style="margin-top:8rpx">Due for review: {{dueCount}}</view>
+    <view class="muted" style="margin-top:8rpx">Last sync: {{lastSyncDisplay || 'never'}}</view>
   </view>
 
   <view class="card">
-    <view class="muted">每日新词上限（0 = 无限制）</view>
-    <input class="input" type="number" value="{{dailyLimit}}" bindinput="onDailyLimit" placeholder="0 = 无限制" />
-    <view class="muted" style="margin-top:8rpx">今日已学新词：{{dailyNewCount}}{{dailyLimit > 0 ? ' / ' + dailyLimit : ''}}</view>
+    <view class="muted">Daily new word limit (0 = unlimited)</view>
+    <input class="input" type="number" value="{{dailyLimit}}" bindinput="onDailyLimit" placeholder="0 = unlimited" />
+    <view class="muted" style="margin-top:8rpx">Today's new words: {{dailyNewCount}}{{dailyLimit > 0 ? ' / ' + dailyLimit : ''}}</view>
   </view>
 
   <view class="muted" style="margin:16rpx 0">{{status}}</view>
 
-  <view class="btn" bindtap="goWordList">单词本</view>
-  <view class="btn btn-accent" bindtap="goReview">开始复习（{{dueCount}}）</view>
+  <view class="btn" bindtap="goWordList">Word list</view>
+  <view class="btn btn-accent" bindtap="goReview">Start review ({{dueCount}})</view>
 </view>
