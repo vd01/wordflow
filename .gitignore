@@ -20,6 +20,14 @@ miniprogram/miniprogram_npm/
 miniprogram/dist/
 miniprogram/ci/private.key
 
+# Android app (android/)
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/.idea/
+android/captures/
+
 # Compiled binaries
 *.exe
 

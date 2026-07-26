@@ -58,6 +58,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/auth/qrcode/status", s.handleQrCodeStatus)
 	mux.HandleFunc("/api/v1/auth/wechat/login", s.handleWeChatLogin)
 
+	// Email auth routes
+	mux.HandleFunc("/api/v1/auth/email/request", s.handleEmailCodeRequest)
+	mux.HandleFunc("/api/v1/auth/email/verify", s.handleEmailCodeVerify)
+
 	// Health check
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 
@@ -78,6 +82,8 @@ func (s *Server) Start() error {
 	log.Printf("  POST /api/v1/auth/qrcode/request  - Request QR code login (get scene)")
 	log.Printf("  GET  /api/v1/auth/qrcode/status   - Poll QR code login status")
 	log.Printf("  POST /api/v1/auth/wechat/login    - WeChat mini program login")
+	log.Printf("  POST /api/v1/auth/email/request  - Request email verification code")
+	log.Printf("  POST /api/v1/auth/email/verify    - Verify email code and get token")
 	log.Printf("  GET  /api/v1/user/status          - View user sync status")
 	log.Printf("  POST /api/v1/sync/push            - Push word data to server")
 	log.Printf("  GET  /api/v1/sync/pull            - Pull word data (incremental sync)")
@@ -195,6 +201,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			"/api/v1/auth/qrcode/request": true,
 			"/api/v1/auth/qrcode/status":  true,
 			"/api/v1/auth/wechat/login":   true,
+			"/api/v1/auth/email/request": true,
+			"/api/v1/auth/email/verify":   true,
 			"/api/v1/health":              true,
 		}
 
@@ -848,7 +856,120 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"service": "wordflow-sync",
 		"version": "1.1.0",
 		"time":    time.Now().Unix(),
-		"wechat":  s.appID != "",
+		"email":  true, // Email auth always available
+	})
+}
+
+// handleEmailCodeRequest sends a 6-digit verification code to the given email.
+// POST /api/v1/auth/email/request
+// Body: { "email": "user@example.com" }
+func (s *Server) handleEmailCodeRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON parse failed: "+err.Error())
+		return
+	}
+
+	if req.Email == "" {
+		writeError(w, http.StatusBadRequest, "Missing email parameter")
+		return
+	}
+
+	// Validate email format (basic)
+	if !strings.Contains(req.Email, "@") || !strings.Contains(req.Email, ".") {
+		writeError(w, http.StatusBadRequest, "Invalid email format")
+		return
+	}
+
+	// Generate a 6-digit code
+	code, err := s.store.CreateEmailCode(req.Email, 10*time.Minute)
+	if err != nil {
+		log.Printf("AUTH  Email code creation failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to create verification code")
+		return
+	}
+
+	// TODO: Send the code via email (SMTP). For now, log it for development.
+	// In production, replace this with actual email sending.
+	log.Printf("AUTH  Email verification code for %s: %s", req.Email, code)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Verification code sent to your email",
+	})
+}
+
+// handleEmailCodeVerify verifies the email code and returns a token.
+// POST /api/v1/auth/email/verify
+// Body: { "email": "user@example.com", "code": "123456" }
+func (s *Server) handleEmailCodeVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON parse failed: "+err.Error())
+		return
+	}
+
+	if req.Email == "" || req.Code == "" {
+		writeError(w, http.StatusBadRequest, "Missing email or code parameter")
+		return
+	}
+
+	// Verify the code
+	valid, err := s.store.VerifyEmailCode(req.Email, req.Code)
+	if err != nil {
+		log.Printf("AUTH  Email code verification failed: %v", err)
+		writeError(w, http.StatusBadRequest, "Invalid or expired verification code")
+		return
+	}
+	if !valid {
+		writeError(w, http.StatusBadRequest, "Invalid or expired verification code")
+		return
+	}
+
+	// Find or create user by email
+	token, err := s.store.FindOrCreateUserByEmail(req.Email)
+	if err != nil {
+		log.Printf("AUTH  FindOrCreateUserByEmail failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "User creation failed")
+		return
+	}
+
+	// Delete the used code
+	s.store.DeleteEmailCode(req.Email, req.Code)
+
+	log.Printf("AUTH  Email login SUCCESS: email=%s, token=%s...", req.Email, token[:min(8, len(token))])
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token":   token,
+		"message": "Login successful",
 	})
 }
 

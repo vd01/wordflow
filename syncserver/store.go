@@ -646,3 +646,138 @@ func (s *Store) ListAuthSessions() []string {
 	}
 	return result
 }
+
+// ============================================================
+// Email auth methods
+// ============================================================
+
+// CreateEmailCode generates a 6-digit verification code for the given email.
+// Returns the code string. The code expires after ttl.
+func (s *Store) CreateEmailCode(email string, ttl time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Ensure email_codes table exists
+	s.ensureEmailCodesTable()
+
+	// Generate 6-digit code
+	b := make([]byte, 3)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate code failed: %v", err)
+	}
+	code := fmt.Sprintf("%06d", int(b[0])<<16|int(b[1])<<8|int(b[2])%1000000)
+
+	now := time.Now().Unix()
+	expiresAt := now + int64(ttl.Seconds())
+
+	// Delete any existing code for this email
+	s.db.Exec("DELETE FROM email_codes WHERE email = ?", email)
+
+	_, err := s.db.Exec(
+		"INSERT INTO email_codes (email, code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+		email, code, now, expiresAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("insert email code failed: %v", err)
+	}
+
+	log.Printf("Email code created: email=%s, code=%s, expires_in=%ds", email, code, int(ttl.Seconds()))
+	return code, nil
+}
+
+// VerifyEmailCode checks if the given code is valid for the email.
+func (s *Store) VerifyEmailCode(email, code string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.ensureEmailCodesTable()
+
+	var expiresAt int64
+	err := s.db.QueryRow(
+		"SELECT expires_at FROM email_codes WHERE email = ? AND code = ?",
+		email, code,
+	).Scan(&expiresAt)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query email code failed: %v", err)
+	}
+
+	if time.Now().Unix() > expiresAt {
+		return false, nil // expired
+	}
+
+	return true, nil
+}
+
+// DeleteEmailCode removes a used verification code.
+func (s *Store) DeleteEmailCode(email, code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ensureEmailCodesTable()
+
+	s.db.Exec("DELETE FROM email_codes WHERE email = ? AND code = ?", email, code)
+}
+
+// FindOrCreateUserByEmail finds an existing user by email, or creates a new one.
+// Returns the user's token.
+func (s *Store) FindOrCreateUserByEmail(email string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ensureEmailCodesTable()
+
+	// Add email column to users table if not exists
+	s.migrateAddColumn("users", "email", "TEXT NOT NULL DEFAULT ''")
+
+	// Unique index on email for user lookup
+	s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email != ''")
+
+	// Try to find existing user by email
+	var token string
+	err := s.db.QueryRow(
+		"SELECT token FROM users WHERE email = ?",
+		email,
+	).Scan(&token)
+
+	if err == nil {
+		log.Printf("Existing user found for email=%s, token=%s...", email, token[:min(8, len(token))])
+		return token, nil
+	}
+
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("query user by email failed: %v", err)
+	}
+
+	// Create new user
+	newToken, err := GenerateToken()
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now().Unix()
+	_, err = s.db.Exec(
+		"INSERT INTO users (token, email, created_at, last_sync) VALUES (?, ?, ?, ?)",
+		newToken, email, now, now,
+	)
+	if err != nil {
+		return "", fmt.Errorf("create user for email failed: %v", err)
+	}
+
+	log.Printf("New user created for email=%s, token=%s...", email, newToken[:8])
+	return newToken, nil
+}
+
+// ensureEmailCodesTable creates the email_codes table if it doesn't exist.
+func (s *Store) ensureEmailCodesTable() {
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS email_codes (
+		email      TEXT NOT NULL,
+		code       TEXT NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		expires_at INTEGER NOT NULL,
+		PRIMARY KEY (email, code)
+	)`)
+}
