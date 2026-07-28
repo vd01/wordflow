@@ -27,7 +27,7 @@
             <button id="btn-clear-search" class="clear-btn hidden" title="清空">✕</button>
             <button id="btn-search" class="search-btn" title="查询">🔍</button>
         </div>
-        <div class="shortcut-hint">全局快捷键: <kbd id="shortcut-display">Ctrl+Alt+Q</kbd> ｜ <kbd>Esc</kbd> 隐藏窗口</div>
+        <div class="shortcut-hint">全局快捷键: <kbd id="shortcut-display">Ctrl+Alt+Q</kbd> ｜ <kbd>Esc</kbd> 隐藏窗口 ｜ <kbd>Ctrl+L</kbd> 聚焦搜索框</div>
     </div>
 
     <!-- Loading -->
@@ -51,7 +51,7 @@
             <h2>📋 查询历史</h2>
             <div class="panel-actions">
                 <button id="btn-clear-history" class="danger-btn">清空全部</button>
-                <button id="btn-close-history" class="icon-btn">✕</button>
+                <button id="btn-close-history" class="settings-back-btn" title="Back">←</button>
             </div>
         </div>
         <div id="history-list" class="history-list"></div>
@@ -60,13 +60,12 @@
     <!-- Settings Panel -->
     <div id="settings-panel" class="panel hidden">
         <div class="settings-tabs">
-            <button id="btn-close-settings" class="settings-back-btn" title="Back">←</button>
             <button class="settings-tab active" data-tab="llm">🤖 LLM</button>
             <button class="settings-tab" data-tab="dict">📖 Dictionary</button>
             <button class="settings-tab" data-tab="sync">🔄 Sync</button>
             <button class="settings-tab" data-tab="shortcut">⌨️ Shortcuts</button>
             <button class="settings-tab" data-tab="other">📦 Other</button>
-            <button class="settings-tab" data-tab="debug">🔧 Debug</button>
+            <button id="btn-close-settings" class="settings-back-btn settings-back-btn-right" title="Back">←</button>
         </div>
         <div class="settings-content">
             <!-- LLM Tab -->
@@ -127,15 +126,15 @@
                         <div class="sync-linked-info">
                             <div id="sync-linked-status" class="sync-linked-status">🟢 Linked</div>
                             <div id="sync-linked-hint" class="sync-linked-hint"></div>
-                            <div id="sync-pair-section" style="margin-top:8px;">
-                                <button id="btn-sync-pair-code" class="secondary-btn" type="button" style="width:100%;">📱 Generate Pairing Code</button>
-                                <div id="sync-pair-code-display" class="hidden" style="text-align:center;margin-top:6px;">
-                                    <div style="font-size:32px;font-weight:bold;letter-spacing:8px;color:var(--primary);" id="sync-pair-code-text"></div>
-                                    <small class="form-hint">Enter this 8-digit code on your Android app to link it to the same account. Valid for 10 minutes.</small>
-                                </div>
+                        </div>
+                        <div id="sync-pair-section" style="margin-top:8px;width:100%;">
+                            <button id="btn-sync-pair-code" class="secondary-btn" type="button" style="width:100%;">📱 Generate Pairing Code</button>
+                            <div id="sync-pair-code-display" class="hidden" style="text-align:center;margin-top:6px;">
+                                <div style="font-size:32px;font-weight:bold;letter-spacing:8px;color:var(--primary);" id="sync-pair-code-text"></div>
+                                <small class="form-hint">Enter this 8-digit code on your Android app to link it to the same account. Valid for 10 minutes.</small>
                             </div>
                         </div>
-                        <button id="btn-sync-unlink" class="danger-btn" type="button" style="width:100%;margin-top:8px;">🔓 Unlink & Re-link</button>
+                        <button id="btn-sync-unlink" class="danger-btn" type="button" style="width:100%;margin-top:8px;">🔓 Unlink &amp; Re-link</button>
                     </div>
                 </div>
 
@@ -215,21 +214,6 @@
                         </label>
                     </div>
                     <small class="form-hint">Adds WordFlow to Windows startup registry (HKCU\...\Run)</small>
-                </div>
-            </div>
-            <div id="settings-tab-debug" class="settings-tab-page">
-                <div class="form-group">
-                    <label>📊 Cache & LLM Stats</label>
-                    <button id="btn-debug-refresh" class="secondary-btn" type="button" style="width:100%;margin-bottom:8px;">🔄 Refresh Stats</button>
-                    <pre id="debug-cache-stats" class="prompt-preview-pre" style="font-size:12px;max-height:200px;">Loading...</pre>
-                </div>
-                <div class="form-group">
-                    <label>🔍 Prompt Structure (for cache analysis)</label>
-                    <div class="prompt-test-row">
-                        <input type="text" id="debug-prompt-word" placeholder="Enter a word to inspect prompt..." value="example"/>
-                        <button id="btn-debug-prompt" class="secondary-btn" type="button">Inspect</button>
-                    </div>
-                    <pre id="debug-prompt-info" class="prompt-preview-pre" style="font-size:12px;max-height:400px;">Click Inspect to see prompt structure...</pre>
                 </div>
             </div>
         </div>

@@ -168,13 +168,39 @@ class Store(context: Context) {
 
     // ── Parse result JSON ──
 
+    @Suppress("UNUSED_ELVIS_LEFT")
     fun parseResult(entry: SyncEntry): ParsedResult? {
         if (entry.result.isBlank()) return null
         return try {
-            // Gson maps snake_case JSON keys to camelCase fields via @SerializedName
-            val pr = gson.fromJson(entry.result, ParsedResult::class.java)
-            // Also handle snake_case keys that Gson might not auto-map
-            pr
+            val pr = gson.fromJson(entry.result, ParsedResult::class.java) ?: return null
+            // Gson bypasses Kotlin's non-null guarantees: when the JSON value is
+            // null (e.g. "tag": null produced by desktop mergeResults), reflection
+            // writes null into the non-null String field. Coalesce every such field
+            // back to "" so the ParsedResult contract holds and downstream
+            // composables (e.g. MetaBadges) never receive null for non-null params.
+            pr.copy(
+                word = pr.word ?: "",
+                phonetic = pr.phonetic ?: "",
+                pronunciation = pr.pronunciation ?: "",
+                translation = pr.translation ?: "",
+                definition = pr.definition ?: "",
+                pos = pr.pos ?: "",
+                tag = pr.tag ?: "",
+                exchange = pr.exchange ?: "",
+                audioUrl = pr.audioUrl ?: "",
+                memoryTips = pr.memoryTips ?: "",
+                synonyms = pr.synonyms ?: "",
+                antonyms = pr.antonyms ?: "",
+                etymology = pr.etymology ?: "",
+                definitions = pr.definitions.map { def ->
+                    def.copy(
+                        pos = def.pos ?: "",
+                        meaning = def.meaning ?: "",
+                        englishExample = def.englishExample ?: "",
+                        chineseExample = def.chineseExample ?: "",
+                    )
+                },
+            )
         } catch (e: Exception) {
             try {
                 // Try manual mapping for snake_case keys

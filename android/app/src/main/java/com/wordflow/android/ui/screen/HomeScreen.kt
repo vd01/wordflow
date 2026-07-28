@@ -1,12 +1,40 @@
 package com.wordflow.android.ui.screen
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,19 +42,32 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wordflow.android.WordFlowApp
 import com.wordflow.android.data.FsrsEngine
 import com.wordflow.android.data.SyncClient
+import com.wordflow.android.ui.components.StateDot
+import com.wordflow.android.ui.components.StatTile
+import com.wordflow.android.ui.components.StatusBanner
+import com.wordflow.android.ui.components.StatusKind
+import com.wordflow.android.ui.theme.Dimens
+import com.wordflow.android.data.STATE_LEARNING
+import com.wordflow.android.data.STATE_NEW
+import com.wordflow.android.data.STATE_RELEARNING
+import com.wordflow.android.data.STATE_REVIEW
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+data class HomeStatus(val text: String, val kind: StatusKind)
+
 class HomeViewModel : ViewModel() {
     var wordCount by mutableStateOf(0)
     var dueCount by mutableStateOf(0)
-    var lastSyncDisplay by mutableStateOf("never")
-    var dailyLimit by mutableStateOf(0)
+    var newCount by mutableStateOf(0)
+    var learningCount by mutableStateOf(0)
+    var reviewCount by mutableStateOf(0)
+    var relearningCount by mutableStateOf(0)
+    var lastSyncDisplay by mutableStateOf("从未同步")
     var dailyNewCount by mutableStateOf(0)
-    var status by mutableStateOf("")
-    var busy by mutableStateOf(false)
-    var email by mutableStateOf("")
+    var dailyLimit by mutableStateOf(0)
+    var status by mutableStateOf<HomeStatus?>(null)
 
     private val client = SyncClient()
     private val fsrs = FsrsEngine()
@@ -36,82 +77,41 @@ class HomeViewModel : ViewModel() {
         val words = store.getWords()
         val reviews = store.getReviews()
         val counts = fsrs.getQueueCounts(words, reviews)
-        val dailyCount = store.getDailyCount()
-
         wordCount = words.size
         dueCount = counts.total
+        newCount = counts.new
+        learningCount = counts.learning
+        reviewCount = counts.review
+        relearningCount = counts.relearning
         lastSyncDisplay = formatSyncTime(store.lastSync)
         dailyLimit = store.dailyLimit
-        dailyNewCount = dailyCount.newCount
-        email = store.userEmail
+        dailyNewCount = store.getDailyCount().newCount
     }
 
-    fun sync(app: WordFlowApp, since: Long? = null) {
+    fun sync(app: WordFlowApp) {
         val store = app.store
         if (!store.isLoggedIn) return
-        busy = true
-        status = "Syncing..."
         viewModelScope.launch {
             try {
-                val effectiveSince = since ?: store.lastSync
-                val res = withContext(Dispatchers.IO) { client.pull(store.serverAddr, store.token, effectiveSince) }
-                val r = store.mergePulled(res.entries, res.serverNow, effectiveSince == 0L)
+                val since = store.lastSync
+                val res = withContext(Dispatchers.IO) { client.pull(store.serverAddr, store.token, since) }
+                store.mergePulled(res.entries, res.serverNow, since == 0L)
                 refresh(app)
-                status = "Synced ${r.changed} entries, local total: ${r.total}"
             } catch (e: Exception) {
-                status = "Sync failed: ${e.message}"
-            } finally {
-                busy = false
+                status = HomeStatus("同步失败：${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
             }
         }
-    }
-
-    fun testConnection(app: WordFlowApp) {
-        val store = app.store
-        busy = true
-        status = "Testing..."
-        viewModelScope.launch {
-            try {
-                val h = withContext(Dispatchers.IO) { client.health(store.serverAddr) }
-                var s = "Connected: ${h.service} v${h.version}"
-                if (h.email) s += " (Email auth enabled)"
-                if (store.isLoggedIn) {
-                    try {
-                        val st = withContext(Dispatchers.IO) { client.getStatus(store.serverAddr, store.token) }
-                        s += " | Remote words: ${st.wordCount}"
-                    } catch (_: Exception) {
-                        s += " | Token invalid"
-                    }
-                }
-                status = s
-            } catch (e: Exception) {
-                status = "Connection failed: ${e.message}"
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun setDailyLimit(app: WordFlowApp, n: Int) {
-        app.store.dailyLimit = n
-        dailyLimit = n
-    }
-
-    fun logout(app: WordFlowApp) {
-        app.store.token = ""
-        app.store.userEmail = ""
-        app.store.lastSync = 0
     }
 
     private fun formatSyncTime(ts: Long): String {
-        if (ts <= 0) return "never"
+        if (ts <= 0) return "从未同步"
         val now = System.currentTimeMillis() / 1000
         val diff = now - ts
         return when {
-            diff < 60 -> "just now"
-            diff < 3600 -> "${diff / 60} min ago"
-            diff < 86400 -> "${diff / 3600} hr ago"
-            diff < 604800 -> "${diff / 86400} days ago"
+            diff < 60 -> "刚刚同步"
+            diff < 3600 -> "${diff / 60} 分钟前同步"
+            diff < 86400 -> "${diff / 3600} 小时前同步"
+            diff < 604800 -> "${diff / 86400} 天前同步"
             else -> {
                 val d = java.util.Date(ts * 1000)
                 val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
@@ -125,121 +125,137 @@ class HomeViewModel : ViewModel() {
 @Composable
 fun HomeScreen(
     onNavigateToReview: () -> Unit,
-    onNavigateToWordList: () -> Unit,
-    onLogout: () -> Unit
+    onNavigateToSettings: () -> Unit,
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val vm: HomeViewModel = viewModel()
 
     LaunchedEffect(Unit) {
         vm.refresh(app)
-        // Auto-sync on first load
-        if (app.store.isLoggedIn) {
-            vm.sync(app)
-        }
+        if (app.store.isLoggedIn) vm.sync(app)
     }
 
     Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("查词温故 WordFlow") },
+                title = { Text("查词温故") },
                 actions = {
-                    IconButton(onClick = { vm.logout(app); onLogout() }) {
-                        Icon(Icons.Default.Logout, contentDescription = "Logout")
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
-                }
+                },
             )
-        }
+        },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(Dimens.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(Dimens.lg),
         ) {
-            // User info
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Synced", style = MaterialTheme.typography.titleMedium)
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text("Email: ${vm.email}", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { vm.testConnection(app) }, enabled = !vm.busy) {
-                            Text("Test")
+            // Hero card — due today is the centerpiece
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = MaterialTheme.shapes.large,
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text("今日待复习", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("DUE TODAY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
                         }
-                        OutlinedButton(onClick = { vm.sync(app, 0) }, enabled = !vm.busy) {
-                            Text("Pull All")
-                        }
+                        Icon(Icons.Default.School, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
                     }
-                }
-            }
-
-            // Stats
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Local words: ${vm.wordCount}")
-                    Text("Due for review: ${vm.dueCount}")
-                    Text("Last sync: ${vm.lastSyncDisplay}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-            }
-
-            // Daily limit
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Daily new word limit", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(0, 5, 10, 20, 50).forEach { n ->
-                            FilterChip(
-                                selected = vm.dailyLimit == n,
-                                onClick = { vm.setDailyLimit(app, n) },
-                                label = { Text(if (n == 0) "∞" else "$n") }
+                    Text("${vm.dueCount}", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold)
+                    Text("个单词待复习", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                    Spacer(Modifier.height(16.dp))
+                    if (vm.dueCount > 0) {
+                        Button(
+                            onClick = onNavigateToReview,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            Text("开始复习")
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Default.ArrowForward, contentDescription = null)
+                        }
+                    } else {
+                        Surface(
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.08f),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "暂无待复习，休息一下吧",
+                                modifier = Modifier.padding(14.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
                             )
                         }
                     }
-                    Text("Today's new words: ${vm.dailyNewCount}${if (vm.dailyLimit > 0) " / ${vm.dailyLimit}" else ""}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
-            // Status
-            if (vm.status.isNotBlank()) {
-                Text(vm.status, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Sync status line
+            Text("已${vm.lastSyncDisplay}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // Stats
+            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md)) {
+                StatTile("${vm.wordCount}", "单词总数", Modifier.weight(1f))
+                val daily = if (vm.dailyLimit > 0) "${vm.dailyNewCount}/${vm.dailyLimit}" else "${vm.dailyNewCount}"
+                StatTile(daily, "今日新词", Modifier.weight(1f))
             }
 
-            Spacer(Modifier.weight(1f))
-
-            // Action buttons
-            OutlinedButton(
-                onClick = onNavigateToWordList,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.List, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Word List")
-            }
-
-            Button(
-                onClick = onNavigateToReview,
+            // Composition card — fills the gap, shows review-queue breakdown
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+                shape = MaterialTheme.shapes.large,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = vm.dueCount > 0
             ) {
-                Icon(Icons.Default.School, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Start Review (${vm.dueCount})")
+                Column(Modifier.padding(Dimens.cardPadding)) {
+                    Text("复习构成", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        CompItem(STATE_NEW, "新词", vm.newCount)
+                        CompItem(STATE_LEARNING, "学习中", vm.learningCount)
+                        CompItem(STATE_REVIEW, "复习", vm.reviewCount)
+                        CompItem(STATE_RELEARNING, "重学", vm.relearningCount)
+                    }
+                }
             }
+
+            vm.status?.let { StatusBanner(text = it.text, kind = it.kind) }
+
+            Spacer(Modifier.height(Dimens.lg))
         }
     }
 }
+
+@Composable
+private fun CompItem(state: Int, label: String, count: Int) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier,
+    ) {
+        StateDot(state)
+        Spacer(Modifier.height(4.dp))
+        Text("$count", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+

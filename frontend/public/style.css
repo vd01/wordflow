@@ -340,13 +340,13 @@ body {
 }
 
 .def-meaning {
-    font-size: 15px;
+    font-size: 17px;
     color: var(--text-primary);
     margin-bottom: 6px;
 }
 
 .def-example {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-secondary);
     margin: 4px 0;
     padding-left: 8px;
@@ -360,11 +360,11 @@ body {
 
 .def-example-cn {
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 14px;
 }
 
 .section-title {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--mauve);
     margin-top: 14px;
@@ -375,7 +375,7 @@ body {
 }
 
 .section-content {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-secondary);
     line-height: 1.6;
     padding-left: 8px;
@@ -536,20 +536,24 @@ body {
 .settings-back-btn {
     background: transparent;
     border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 18px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
-    padding: 10px 12px;
-    margin-right: 4px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
     transition: all 0.2s;
     flex-shrink: 0;
+    line-height: 1;
 }
 
 .settings-back-btn:hover {
-    color: var(--accent);
-    background: rgba(137, 180, 250, 0.08);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.settings-back-btn-right {
+    margin-left: auto;
 }
 
 .settings-tab {
@@ -939,6 +943,17 @@ body {
     margin-top: 8px;
 }
 
+/* ===== Fuzzy Correction Hint ("Did you mean?") ===== */
+.fuzzy-correction-hint {
+    font-size: 12px;
+    color: var(--peach);
+    margin-top: 6px;
+    margin-bottom: 4px;
+    padding: 4px 8px;
+    background: rgba(250, 179, 135, 0.08);
+    border-radius: 4px;
+    border: 1px solid rgba(250, 179, 135, 0.2);
+}
 /* ===== LLM Error Note ===== */
 .llm-error-note {
     font-size: 11px;
@@ -1142,18 +1157,23 @@ body {
 /* ===== Prompt Settings ===== */
 .prompt-entry-btn {
     width: 100%;
-    padding: 12px 16px;
-    background: linear-gradient(135deg, var(--accent-dim), var(--bg-tertiary));
-    color: var(--text-primary);
-    border: 1px solid var(--accent);
+    padding: 14px 16px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    border: none;
     border-radius: var(--radius);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
-    text-align: left;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(137, 180, 250, 0.3);
 }
 .prompt-entry-btn:hover {
+    background: var(--accent-hover);
+    box-shadow: 0 4px 12px rgba(137, 180, 250, 0.5);
+    transform: translateY(-1px);
+}
     background: linear-gradient(135deg, var(--accent), var(--accent-dim));
 }
 
@@ -1461,7 +1481,7 @@ body {
 .sync-linked-card {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 10px;
     padding: 16px;
     background: var(--bg-tertiary);
@@ -1482,6 +1502,7 @@ body {
 
 .sync-linked-info {
     text-align: center;
+    width: 100%;
 }
 
 .sync-linked-status {

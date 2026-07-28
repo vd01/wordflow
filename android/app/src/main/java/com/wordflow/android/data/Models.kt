@@ -75,7 +75,7 @@ data class ParsedResult(
     val oxford: Int? = null,
     val exchange: String = "",
     val audioUrl: String = "",
-    val memoryTips: String = "",
+    @SerializedName("memory_tips") val memoryTips: String = "",
     val synonyms: String = "",
     val antonyms: String = "",
     val etymology: String = "",
@@ -91,6 +91,6 @@ data class ParsedResult(
 data class DefinitionItem(
     val pos: String = "",
     val meaning: String = "",
-    val englishExample: String = "",
-    val chineseExample: String = ""
+    @SerializedName("english_example") val englishExample: String = "",
+    @SerializedName("chinese_example") val chineseExample: String = ""
 )

@@ -267,6 +267,7 @@ type EcdictEntry struct {
 	Pos         string `json:"pos"`         // Part of speech
 	Collins     *int   `json:"collins"`     // Collins star rating 1-5
 	Oxford      *int   `json:"oxford"`      // Oxford 3000 flag
+	CorrectedFrom string `json:"corrected_from"` // original word when corrected via fuzzy match
 	Tag         string `json:"tag"`         // Exam tags: "cet4 cet6 gre toefl"
 	Bnc         *int   `json:"bnc"`         // BNC frequency rank
 	Frq         *int   `json:"frq"`         // Contemporary corpus frequency rank
@@ -322,7 +323,8 @@ func (e *EcdictService) openDB(dbPath string) {
 
 // LookupEcdict looks up a word in ECDICT. Returns nil if not found or DB unavailable.
 // Uses case-insensitive matching by trying the lowercase form first (index-friendly),
-// then falls back to COLLATE NOCASE only if needed.
+// then falls back to COLLATE NOCASE, and finally tries fuzzy (Levenshtein) matching
+// for minor spelling mistakes (transpositions, single char off).
 func (e *EcdictService) LookupEcdict(word string) *EcdictEntry {
 	e.mu.RLock()
 	db := e.db
@@ -337,13 +339,13 @@ func (e *EcdictService) LookupEcdict(word string) *EcdictEntry {
 		return nil
 	}
 
-	// Try exact match first (uses primary key index — fastest)
+	// 1) Try exact match first (uses primary key index — fastest)
 	entry := e.queryWord(db, word)
 	if entry != nil {
 		return entry
 	}
 
-	// Try lowercase match (covers most case mismatches, still index-friendly)
+	// 2) Try lowercase match (covers most case mismatches, still index-friendly)
 	lowerWord := strings.ToLower(word)
 	if lowerWord != word {
 		entry = e.queryWord(db, lowerWord)
@@ -352,8 +354,23 @@ func (e *EcdictService) LookupEcdict(word string) *EcdictEntry {
 		}
 	}
 
-	// Last resort: COLLATE NOCASE (slower, but catches mixed-case entries)
-	return e.queryWordCollate(db, word)
+	// 3) COLLATE NOCASE (slower, but catches mixed-case entries)
+	entry = e.queryWordCollate(db, word)
+	if entry != nil {
+		return entry
+	}
+
+	// 4) Fuzzy match: find the closest word for minor spelling mistakes
+	//    This covers transpositions ("recieve"→"receive"), single wrong/missing/extra chars
+	entry = e.lookupFuzzy(db, word)
+	if entry != nil {
+		// Mark the original word so the frontend can show "Did you mean X?"
+		entry.CorrectedFrom = word
+		log.Printf("[ECDICT-DEBUG] Fuzzy match for %q: found %q", word, entry.Word)
+		return entry
+	}
+
+	return nil
 }
 
 func (e *EcdictService) queryWord(db *sql.DB, word string) *EcdictEntry {
@@ -370,6 +387,113 @@ func (e *EcdictService) queryWordCollate(db *sql.DB, word string) *EcdictEntry {
 		word,
 	)
 	return e.scanEntry(row)
+}
+
+// lookupFuzzy searches for words that are similar to the query using
+// same-first-letter prefix matching + Levenshtein distance.
+// Returns the closest match if edit distance ≤ 2, otherwise nil.
+func (e *EcdictService) lookupFuzzy(db *sql.DB, word string) *EcdictEntry {
+	if len(word) < 2 {
+		return nil
+	}
+
+	// Get candidates with the same first letter to narrow the search
+	// Use SQL prefix range for fast index scan (all- lowercase for correct byte ordering)
+	firstChar := strings.ToLower(string(word[0]))
+	rows, err := db.Query(
+		"SELECT word FROM ecdict WHERE word >= ? AND word < ? LIMIT 500",
+		firstChar,
+		string(firstChar[0]+1),
+	)
+	if err != nil {
+		log.Printf("[ECDICT-DEBUG] Fuzzy prefix query error: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		word  string
+		dist  int
+	}
+	var best candidate
+	best.dist = 3 // threshold: only accept distance ≤ 2
+	lowerQuery := strings.ToLower(word)
+
+	for rows.Next() {
+		var candidateWord string
+		if err := rows.Scan(&candidateWord); err != nil {
+			continue
+		}
+		// Quick length filter: skip if length differs by more than 2
+		if abs(len(candidateWord)-len(word)) > 2 {
+			continue
+		}
+		dist := levenshteinDistance(lowerQuery, strings.ToLower(candidateWord))
+		if dist < best.dist {
+			best.word = candidateWord
+			best.dist = dist
+		}
+	}
+
+	if best.dist <= 2 && best.word != "" {
+		return e.queryWord(db, best.word)
+	}
+	return nil
+}
+
+// levenshteinDistance computes the edit distance between two strings.
+// Uses the standard two-row DP approach for O(n*m) time and O(n) space.
+func levenshteinDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	// Make a the shorter string for smaller memory usage
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	la, lb := len(a), len(b)
+	// Single allocation for the DP row
+	row := make([]int, la+1)
+	for i := 1; i <= la; i++ {
+		row[i] = i
+	}
+	for j := 1; j <= lb; j++ {
+		prev := row[0]
+		row[0] = j
+		for i := 1; i <= la; i++ {
+			temp := row[i]
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			row[i] = min3(temp+1, row[i-1]+1, prev+cost)
+			prev = temp
+		}
+	}
+	return row[la]
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func (e *EcdictService) scanEntry(row *sql.Row) *EcdictEntry {
@@ -684,7 +808,7 @@ func defaultPromptConfig() *PromptConfig {
 		Fields: []PromptField{
 			{Key: "word", Label: "单词", Icon: "🔤", Type: "string", Desc: "被查询的英语单词或短语", Enabled: true, Builtin: true},
 			{Key: "phonetic", Label: "音标", Icon: "🎵", Type: "string", Desc: "音标（国际音标）", Enabled: true, Builtin: true},
-			{Key: "pronunciation", Label: "发音提示", Icon: "🗣️", Type: "string", Desc: "发音提示（用中文近似标注）", Enabled: true, Builtin: true},
+			{Key: "pronunciation", Label: "发音提示", Icon: "🗣️", Type: "string", Desc: "发音提示（用中文近似标注）", Enabled: false, Builtin: true},
 			{Key: "definitions", Label: "详细释义", Icon: "📖", Type: "definitions", Desc: "包含词性、释义、英文例句及中文翻译", Enabled: true, Builtin: true},
 			{Key: "memory_tips", Label: "记忆技巧", Icon: "🧠", Type: "text", Desc: "帮助记忆的技巧、词根词缀分析、联想记忆等", Enabled: true, Builtin: true},
 			{Key: "synonyms", Label: "近义词", Icon: "📌", Type: "list", Desc: "近义词（如有）", Enabled: true, Builtin: true},
@@ -751,6 +875,14 @@ func mergePromptConfig(saved *PromptConfig) *PromptConfig {
 		if _, ok := savedByID[f.Key]; ok {
 			f.Builtin = false
 			result.Fields = append(result.Fields, f)
+		}
+	}
+
+	// Force-disable Chinese homophone pronunciation mnemonics for all users
+	for i := range result.Fields {
+		if result.Fields[i].Key == "pronunciation" {
+			result.Fields[i].Enabled = false
+			break
 		}
 	}
 	return result

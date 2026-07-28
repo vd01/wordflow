@@ -1,71 +1,105 @@
 package com.wordflow.android.ui.theme
 
 import android.app.Activity
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
-// WordFlow brand colors
-val DarkSlate = Color(0xFF2C3E50)
-val WetAsphalt = Color(0xFF34495E)
-val Clouds = Color(0xFFECF0F1)
-val Silver = Color(0xFFBDC3C7)
-val Concrete = Color(0xFF95A5A6)
-val Turquoise = Color(0xFF1ABC9C)
-val GreenSea = Color(0xFF16A085)
-val PeterRiver = Color(0xFF3498DB)
-val Alizarin = Color(0xFFE74C3C)
-val Carrot = Color(0xFFE67E22)
-val SunFlower = Color(0xFFF1C40F)
-val Emerald = Color(0xFF2ECC71)
-val Nephritis = Color(0xFF27AE60)
-
-// Rating colors
-val AgainColor = Color(0xFFE74C3C)
-val HardColor = Color(0xFFE67E22)
-val GoodColor = Color(0xFF27AE60)
-val EasyColor = Color(0xFF3498DB)
-
-private val DarkColorScheme = darkColorScheme(
-    primary = Turquoise,
-    onPrimary = Color.White,
-    secondary = PeterRiver,
-    onSecondary = Color.White,
-    tertiary = Emerald,
-    background = Color(0xFF1A1A2E),
-    surface = Color(0xFF16213E),
-    onBackground = Clouds,
-    onSurface = Clouds,
-    error = Alizarin,
+private val LightColors = lightColorScheme(
+    primary = BrandPrimary,
+    onPrimary = BrandOnPrimary,
+    primaryContainer = BrandPrimaryContainer,
+    onPrimaryContainer = BrandOnPrimaryContainer,
+    secondary = BrandSecondary,
+    secondaryContainer = BrandSecondaryContainer,
+    onSecondaryContainer = BrandOnSecondaryContainer,
+    tertiary = BrandTertiary,
+    tertiaryContainer = BrandTertiaryContainer,
+    onTertiaryContainer = BrandOnTertiaryContainer,
+    background = BrandBackground,
+    onBackground = BrandOnBackground,
+    surface = BrandSurface,
+    onSurface = BrandOnBackground,
+    surfaceVariant = BrandSurfaceVariant,
+    onSurfaceVariant = BrandOnSurfaceVariant,
+    outline = BrandOutline,
+    outlineVariant = BrandOutlineVariant,
+    error = BrandError,
+    errorContainer = BrandErrorContainer,
+    onErrorContainer = BrandOnErrorContainer,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = DarkSlate,
-    onPrimary = Color.White,
-    secondary = Turquoise,
-    onSecondary = Color.White,
-    tertiary = GreenSea,
-    background = Color(0xFFF5F6F8),
-    surface = Color.White,
-    onBackground = DarkSlate,
-    onSurface = DarkSlate,
-    error = Alizarin,
+private val DarkColors = darkColorScheme(
+    primary = BrandPrimaryDark,
+    onPrimary = BrandOnPrimaryDark,
+    primaryContainer = BrandPrimaryContainerDark,
+    onPrimaryContainer = BrandOnPrimaryContainerDark,
+    secondary = BrandSecondaryDark,
+    secondaryContainer = BrandSecondaryContainerDark,
+    onSecondaryContainer = BrandOnSecondaryContainerDark,
+    tertiary = BrandTertiaryDark,
+    tertiaryContainer = BrandTertiaryContainerDark,
+    onTertiaryContainer = BrandOnTertiaryContainerDark,
+    background = BrandBackgroundDark,
+    onBackground = BrandOnBackgroundDark,
+    surface = BrandSurfaceDark,
+    onSurface = BrandOnBackgroundDark,
+    surfaceVariant = BrandSurfaceVariantDark,
+    onSurfaceVariant = BrandOnSurfaceVariantDark,
+    outline = BrandOutlineDark,
+    outlineVariant = BrandOutlineVariantDark,
+    error = BrandErrorDark,
+    errorContainer = BrandErrorContainerDark,
+    onErrorContainer = BrandOnErrorContainerDark,
+)
+
+val WordFlowShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
 @Composable
 fun WordFlowTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        darkTheme -> DarkColors
+        else -> LightColors
+    }
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
+        }
+    }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        content = content
+        typography = WordFlowTypography,
+        shapes = WordFlowShapes,
+        content = content,
     )
 }

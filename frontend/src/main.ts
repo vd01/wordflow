@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, GetCacheStats, GetPromptDebugInfo, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode, RequestPairCode } from "../bindings/wordflow/syncservice.js";
@@ -45,7 +45,7 @@ function defaultPromptConfig(): PromptConfig {
         fields: [
             { key: "word", label: "单词", icon: "🔤", type: "string", desc: "被查询的英语单词或短语", enabled: true, builtin: true },
             { key: "phonetic", label: "音标", icon: "🎵", type: "string", desc: "音标（国际音标）", enabled: true, builtin: true },
-            { key: "pronunciation", label: "发音提示", icon: "🗣️", type: "string", desc: "发音提示（用中文近似标注）", enabled: true, builtin: true },
+            { key: "pronunciation", label: "发音提示", icon: "🗣️", type: "string", desc: "发音提示（用中文近似标注）", enabled: false, builtin: true },
             { key: "definitions", label: "详细释义", icon: "📖", type: "definitions", desc: "包含词性、释义、英文例句及中文翻译", enabled: true, builtin: true },
             { key: "memory_tips", label: "记忆技巧", icon: "🧠", type: "text", desc: "帮助记忆的技巧、词根词缀分析、联想记忆等", enabled: true, builtin: true },
             { key: "synonyms", label: "近义词", icon: "📌", type: "list", desc: "近义词（如有）", enabled: true, builtin: true },
@@ -92,6 +92,17 @@ GetPromptConfig().then(json => {
 }).catch(err => {
     promptConfig = defaultPromptConfig();
     console.error("[WordFlow] Failed to load prompt config:", err);
+});
+
+// Load LLM configuration at startup so doSearch() can detect it correctly
+GetConfig().then(config => {
+    if (config) {
+        inputApiKey.value = config.apiKey || "";
+        inputApiUrl.value = config.apiURL || "";
+        inputModelName.value = config.modelName || "";
+    }
+}).catch(err => {
+    console.error("[WordFlow] Failed to load LLM config at startup:", err);
 });
 
 // ============================================================
@@ -528,10 +539,10 @@ function mergeResults(ecdict: any, llm: any): any {
     // ECDICT-specific fields (always present when available)
     merged.collins = ecdict?.collins ?? null;
     merged.oxford = ecdict?.oxford ?? null;
-    merged.tag = ecdict?.tag || null;
+    merged.tag = ecdict?.tag || "";
     merged.bnc = ecdict?.bnc ?? null;
     merged.frq = ecdict?.frq ?? null;
-    merged.exchange = ecdict?.exchange || null;
+    merged.exchange = ecdict?.exchange || "";
 
     // Audio URL: from LLM result if present (e.g. if cached with audioUrl),
     // otherwise left empty — will be filled by background LookupWordAudio call
@@ -599,6 +610,11 @@ function renderWordResult(data: any, isLoadingMore: boolean): string {
         html += `<span class="word-pronunciation">${escapeHtml(data.pronunciation)}</span>`;
     }
     html += "</div>";
+
+    // ── Did you mean? hint for fuzzy-corrected words ──
+    if (data.corrected_from && data.corrected_from !== data.word) {
+        html += `<div class="fuzzy-correction-hint">💡 您是不是想找：<strong>${escapeHtml(data.word)}</strong>？（原始输入：${escapeHtml(data.corrected_from)}）</div>`;
+    }
 
     // ── ECDICT badges: exam tags, Collins stars, frequency ──
     const examTags = formatExamTags(data.tag);
@@ -1095,8 +1111,15 @@ inputShortcutKey.addEventListener("keyup", (e: KeyboardEvent) => {
     }
 });
 
-// Esc key to hide window
+// Ctrl+L / Cmd+L: focus search input
+// Esc key: close panels / hide window
 document.addEventListener("keydown", (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "l" || e.key === "L")) {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+        return;
+    }
     if (e.key === "Escape" && !isRecording) {
         if (promptModal && !promptModal.classList.contains("hidden")) {
             closePromptModal();
@@ -1776,52 +1799,3 @@ btnPromptReset.addEventListener("click", () => {
     populateFromEditor();
 });
 
-// ============================================================
-// Debug Tab - Cache stats & Prompt structure inspection
-// ============================================================
-const btnDebugRefresh = document.getElementById("btn-debug-refresh") as HTMLButtonElement;
-const debugCacheStats = document.getElementById("debug-cache-stats") as HTMLPreElement;
-const btnDebugPrompt = document.getElementById("btn-debug-prompt") as HTMLButtonElement;
-const debugPromptWord = document.getElementById("debug-prompt-word") as HTMLInputElement;
-const debugPromptInfo = document.getElementById("debug-prompt-info") as HTMLPreElement;
-
-async function refreshCacheStats() {
-    try {
-        const stats = await GetCacheStats() as any;
-        debugCacheStats.textContent = JSON.stringify(stats, null, 2);
-    } catch (err: any) {
-        debugCacheStats.textContent = "Error: " + String(err);
-    }
-}
-
-async function inspectPrompt() {
-    const word = debugPromptWord.value.trim() || "example";
-    try {
-        const info = await GetPromptDebugInfo(word) as any;
-        // Format nicely
-        const formatted = Object.entries(info)
-            .map(([k, v]) => {
-                if (k.endsWith("Len") || k === "memoryCacheSize") {
-                    return `${k}: ${v}`;
-                }
-                return `--- ${k} ---\n${v}`;
-            })
-            .join("\n\n");
-        debugPromptInfo.textContent = formatted;
-    } catch (err: any) {
-        debugPromptInfo.textContent = "Error: " + String(err);
-    }
-}
-
-btnDebugRefresh.addEventListener("click", refreshCacheStats);
-btnDebugPrompt.addEventListener("click", inspectPrompt);
-
-// Auto-load stats when debug tab is shown
-const origSettingsTabs = document.querySelectorAll(".settings-tab");
-origSettingsTabs.forEach(tab => {
-    tab.addEventListener("click", () => {
-        if ((tab as HTMLElement).dataset.tab === "debug") {
-            refreshCacheStats();
-        }
-    });
-});
