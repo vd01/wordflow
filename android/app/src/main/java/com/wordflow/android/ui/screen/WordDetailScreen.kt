@@ -1,19 +1,49 @@
 package com.wordflow.android.ui.screen
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.wordflow.android.WordFlowApp
 import com.wordflow.android.data.FsrsEngine
-import com.wordflow.android.data.STATE_LABELS
+import com.wordflow.android.ui.components.AudioButton
+import com.wordflow.android.ui.components.DefinitionBlock
+import com.wordflow.android.ui.components.MetaBadges
+import com.wordflow.android.ui.components.SectionBlock
+import com.wordflow.android.ui.components.SectionText
+import com.wordflow.android.ui.components.StateBadge
+import com.wordflow.android.ui.components.formatPhonetic
+import com.wordflow.android.ui.theme.Dimens
+import kotlin.math.ceil
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -21,111 +51,123 @@ fun WordDetailScreen(wordId: String, onBack: () -> Unit) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val fsrs = remember { FsrsEngine() }
 
-    val entry = app.store.getWord(wordId)
+    val entry = remember { app.store.getWord(wordId) }
     val parsedResult = entry?.let { app.store.parseResult(it) }
-    val card = app.store.getReview(wordId)
+    var card by remember { mutableStateOf(app.store.getReview(wordId)) }
 
-    val stateLabel = STATE_LABELS[card?.state ?: 0] ?: "New"
-    val nextDue = card?.let {
-        if (it.due <= 0) ""
-        else {
+    val state = card?.state ?: 0
+    val dueInfo = card?.let {
+        if (it.due <= 0) "已到期" else {
             val diffMs = it.due - System.currentTimeMillis()
             when {
-                diffMs <= 0 -> "Due now"
+                diffMs <= 0 -> "已到期"
                 else -> {
-                    val diffDays = Math.ceil(diffMs / (1000.0 * 60 * 60 * 24)).toInt()
-                    if (diffDays == 1) "Due tomorrow" else "Due in $diffDays days"
+                    val diffDays = ceil(diffMs / (1000.0 * 60 * 60 * 24)).toInt()
+                    if (diffDays == 1) "明天到期" else "$diffDays 天后到期"
                 }
             }
         }
     } ?: ""
-    val interval = card?.let {
-        if (it.scheduledDays > 0) fsrs.formatInterval(it.scheduledDays) else ""
-    } ?: ""
+    val intervalStr = card?.let { if (it.scheduledDays > 0) fsrs.formatInterval(it.scheduledDays) else "" } ?: ""
 
     Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(entry?.word ?: "Word Detail") },
+                title = { Text(entry?.word ?: "单词详情") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
+                },
+                actions = {
+                    if (parsedResult != null) AudioButton(text = parsedResult.word)
+                },
             )
-        }
+        },
     ) { padding ->
         if (entry == null) {
-            Column(modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp)) {
-                Text("Word not found", color = MaterialTheme.colorScheme.error)
+            Column(Modifier.fillMaxSize().padding(padding).padding(32.dp)) {
+                Text("未找到单词", color = MaterialTheme.colorScheme.error)
             }
             return@Scaffold
         }
+        val pr = parsedResult ?: return@Scaffold
 
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            // Word header
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(Dimens.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(Dimens.sm),
+        ) {
+            // Header
             Text(entry.word, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                parsedResult?.phonetic?.let {
-                    Text("/$it/", style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (pr.phonetic.isNotBlank()) {
+                    Text(formatPhonetic(pr.phonetic), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Spacer(Modifier.width(12.dp))
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
-                    Text(stateLabel, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall)
+                StateBadge(state)
+            }
+            if (dueInfo.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val text = if (intervalStr.isNotBlank()) "$dueInfo · 间隔 $intervalStr" else dueInfo
+                    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (nextDue.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text("📅 $nextDue${if (interval.isNotBlank()) "  Interval: $interval" else ""}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Spacer(Modifier.height(8.dp))
+            MetaBadges(tag = pr.tag, collins = pr.collins, oxford = pr.oxford)
+            Spacer(Modifier.height(8.dp))
+
+            if (pr.translation.isNotBlank()) {
+                SectionBlock(label = "释义") { SectionText(pr.translation) }
             }
-
-            Spacer(Modifier.height(16.dp))
-            Divider()
-            Spacer(Modifier.height(12.dp))
-
-            val pr = parsedResult ?: return@Column
-
-            // Badges
-            if (pr.tag.isNotBlank() || pr.collins != null || pr.oxford != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (pr.tag.isNotBlank()) Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = MaterialTheme.shapes.small) {
-                        Text(pr.tag, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
-                    }
-                    if (pr.collins != null) Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.small) {
-                        Text("★${pr.collins}", modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
-                    }
-                    if (pr.oxford != null) Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
-                        Text("Oxford", modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
+            if (pr.definition.isNotBlank()) {
+                SectionBlock(label = "英文释义") { SectionText(pr.definition) }
             }
-
-            if (pr.translation.isNotBlank()) { Section("释义", pr.translation) }
-            if (pr.definition.isNotBlank()) { Section("Definition", pr.definition) }
             if (pr.definitions.isNotEmpty()) {
-                Text("详细释义", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                pr.definitions.forEach { def ->
-                    if (def.pos.isNotBlank()) Text(def.pos, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    if (def.meaning.isNotBlank()) Text(def.meaning, fontSize = 14.sp)
-                    if (def.englishExample.isNotBlank()) Text("📝 ${def.englishExample}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (def.chineseExample.isNotBlank()) Text("💡 ${def.chineseExample}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(6.dp))
+                SectionBlock(label = "详细释义") {
+                    pr.definitions.forEach { def ->
+                        DefinitionBlock(
+                            pos = def.pos,
+                            meaning = def.meaning,
+                            englishExample = def.englishExample,
+                            chineseExample = def.chineseExample,
+                        )
+                    }
                 }
             }
-            if (pr.memoryTips.isNotBlank()) { Section("🧠 记忆技巧", pr.memoryTips) }
-            if (pr.synonyms.isNotBlank()) { Section("📌 近义词", pr.synonyms) }
-            if (pr.antonyms.isNotBlank()) { Section("🚫 反义词", pr.antonyms) }
-            if (pr.etymology.isNotBlank()) { Section("📚 词源", pr.etymology) }
-            if (pr.exchange.isNotBlank()) { Section("🔄 词形变化", pr.exchange) }
+            if (pr.memoryTips.isNotBlank()) {
+                SectionBlock(label = "记忆技巧") { SectionText(pr.memoryTips) }
+            }
+            if (pr.synonyms.isNotBlank()) {
+                SectionBlock(label = "近义词") { SectionText(pr.synonyms) }
+            }
+            if (pr.antonyms.isNotBlank()) {
+                SectionBlock(label = "反义词") { SectionText(pr.antonyms) }
+            }
+            if (pr.etymology.isNotBlank()) {
+                SectionBlock(label = "词源") { SectionText(pr.etymology) }
+            }
+            if (pr.exchange.isNotBlank()) {
+                SectionBlock(label = "词形变化") { SectionText(pr.exchange) }
+            }
+
+            Spacer(Modifier.height(Dimens.lg))
+            // Actions
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                OutlinedButton(onClick = {
+                    app.store.removeReview(wordId)
+                    card = null
+                }) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("重置进度")
+                }
+            }
+            Spacer(Modifier.height(Dimens.xl))
         }
     }
-}
-
-@Composable
-private fun Section(label: String, text: String) {
-    Spacer(Modifier.height(8.dp))
-    Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-    Text(text, style = MaterialTheme.typography.bodyMedium)
 }
