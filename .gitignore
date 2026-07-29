@@ -14,6 +14,14 @@ ECDICT/
 
 # Local screenshots / debug images
 001.png
+screenshots/
+*.png
+!build/android/app/src/main/res/mipmap-*/ic_launcher*.png
+!build/appicon.png
+!build/ios/icon.png
+!frontend/public/*.png
+!frontend/public/*.jpg
+!frontend/public/*.svg
 # WeChat Mini Program (miniprogram/)
 miniprogram/node_modules/
 miniprogram/miniprogram_npm/
