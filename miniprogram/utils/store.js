@@ -1,5 +1,5 @@
 // Local storage of words pulled from SyncServer + FSRS review state.
-// Review state is Mini-Program-LOCAL (decision A): not synced to the server.
+// Review state is synced to the server so it persists across devices/reinstalls.
 
 const WORDS_KEY = 'wordwise_words'     // { [id]: SyncEntry }
 const REVIEWS_KEY = 'wordwise_reviews' // { [id]: FsrsCard }
@@ -47,6 +47,28 @@ function removeReview(id) {
   const map = getReviews()
   delete map[id]
   setReviews(map)
+}
+
+/** Merge pulled review cards into local store. Last-write-wins by lastReview. */
+function mergePulledReviews(cards) {
+  const local = getReviews()
+  let changed = 0
+  ;(cards || []).forEach((card) => {
+    if (!card || !card.id) return
+    const cur = local[card.id]
+    if (!cur || (card.lastReview || 0) > (cur.lastReview || 0)) {
+      local[card.id] = card
+      changed++
+    }
+  })
+  if (changed > 0) setReviews(local)
+  return changed
+}
+
+/** Get all review cards as an array (for pushing to server). */
+function getAllReviewCards() {
+  const map = getReviews()
+  return Object.keys(map).map((id) => map[id])
 }
 
 // --- Word operations ---
@@ -178,6 +200,7 @@ function isDailyNewLimitReached() {
 module.exports = {
   getWords, setWords, mergePulled, wordList, getWord, parseResult,
   getReviews, setReviews, getReview, saveReview, removeReview,
+  mergePulledReviews, getAllReviewCards,
   getLastSync, setLastSync,
   getDailyLimit, setDailyLimit, getDailyCount, incrementDailyNewCount, decrementDailyNewCount, isDailyNewLimitReached,
   WORDS_KEY, REVIEWS_KEY, LASTSYNC_KEY, DAILY_LIMIT_KEY, DAILY_COUNT_KEY

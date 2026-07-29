@@ -11,13 +11,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,15 +28,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -49,7 +55,6 @@ import com.wordflow.android.ui.components.StatusKind
 import com.wordflow.android.ui.theme.Dimens
 import com.wordflow.android.data.STATE_LEARNING
 import com.wordflow.android.data.STATE_NEW
-import com.wordflow.android.data.STATE_RELEARNING
 import com.wordflow.android.data.STATE_REVIEW
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,13 +81,15 @@ class HomeViewModel : ViewModel() {
         val store = app.store
         val words = store.getWords()
         val reviews = store.getReviews()
-        val counts = fsrs.getQueueCounts(words, reviews)
+        val dailyNewRemaining = store.getDailyNewRemaining()
+        val dueCounts = fsrs.getQueueCounts(words, reviews, dailyNewRemaining)
+        val totalCounts = fsrs.getTotalCounts(words, reviews)
         wordCount = words.size
-        dueCount = counts.total
-        newCount = counts.new
-        learningCount = counts.learning
-        reviewCount = counts.review
-        relearningCount = counts.relearning
+        dueCount = dueCounts.total
+        newCount = totalCounts.new
+        learningCount = totalCounts.learning
+        reviewCount = totalCounts.review
+        relearningCount = totalCounts.relearning
         lastSyncDisplay = formatSyncTime(store.lastSync)
         dailyLimit = store.dailyLimit
         dailyNewCount = store.getDailyCount().newCount
@@ -94,8 +101,21 @@ class HomeViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val since = store.lastSync
-                val res = withContext(Dispatchers.IO) { client.pull(store.serverAddr, store.token, since) }
-                store.mergePulled(res.entries, res.serverNow, since == 0L)
+                // Pull words + review cards from server
+                val (wordRes, reviewRes) = withContext(Dispatchers.IO) {
+                    val wr = client.pull(store.serverAddr, store.token, since)
+                    val rr = client.pullReviews(store.serverAddr, store.token, since)
+                    Pair(wr, rr)
+                }
+                store.mergePulled(wordRes.entries, wordRes.serverNow, since == 0L)
+                store.mergePulledReviews(reviewRes.cards)
+                // Push local review cards to server
+                withContext(Dispatchers.IO) {
+                    val localCards = store.getAllReviewCards()
+                    if (localCards.isNotEmpty()) {
+                        client.pushReviews(store.serverAddr, store.token, localCards)
+                    }
+                }
                 refresh(app)
             } catch (e: Exception) {
                 status = HomeStatus("同步失败：${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
@@ -126,12 +146,25 @@ class HomeViewModel : ViewModel() {
 fun HomeScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToWordList: () -> Unit,
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val vm: HomeViewModel = viewModel()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Refresh every time the screen becomes visible (navigate back, reopen app, etc.)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.refresh(app)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Initial sync on first load
     LaunchedEffect(Unit) {
-        vm.refresh(app)
         if (app.store.isLoggedIn) vm.sync(app)
     }
 
@@ -224,18 +257,28 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(Dimens.cardPadding)) {
-                    Text("复习构成", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("词库构成", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         CompItem(STATE_NEW, "新词", vm.newCount)
-                        CompItem(STATE_LEARNING, "学习中", vm.learningCount)
+                        CompItem(STATE_LEARNING, "学习中", vm.learningCount + vm.relearningCount)
                         CompItem(STATE_REVIEW, "复习", vm.reviewCount)
-                        CompItem(STATE_RELEARNING, "重学", vm.relearningCount)
                     }
                 }
+            }
+
+            // Word list shortcut
+            OutlinedButton(
+                onClick = onNavigateToWordList,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("词库 (${vm.wordCount})")
             }
 
             vm.status?.let { StatusBanner(text = it.text, kind = it.kind) }

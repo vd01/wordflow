@@ -1,5 +1,10 @@
 package com.wordflow.android.ui.screen
 
+import com.wordflow.android.data.SyncClient
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -146,10 +151,10 @@ class ReviewViewModel : ViewModel() {
 
         val preview = try { fsrs.previewIntervals(c) } catch (_: Exception) { null }
         val ints: Map<String, String> = mapOf(
-            "again" to (preview?.let { fsrs.formatInterval(it.again.scheduledDays) } ?: ""),
-            "hard" to (preview?.let { fsrs.formatInterval(it.hard.scheduledDays) } ?: ""),
-            "good" to (preview?.let { fsrs.formatInterval(it.good.scheduledDays) } ?: ""),
-            "easy" to (preview?.let { fsrs.formatInterval(it.easy.scheduledDays) } ?: ""),
+            "again" to (preview?.let { fsrs.formatInterval(it.again.scheduledDays, it.again) } ?: ""),
+            "hard" to (preview?.let { fsrs.formatInterval(it.hard.scheduledDays, it.hard) } ?: ""),
+            "good" to (preview?.let { fsrs.formatInterval(it.good.scheduledDays, it.good) } ?: ""),
+            "easy" to (preview?.let { fsrs.formatInterval(it.easy.scheduledDays, it.easy) } ?: ""),
         )
 
         entry = e; card = c; parsedResult = pr; revealed = false; intervals = ints
@@ -161,6 +166,22 @@ class ReviewViewModel : ViewModel() {
         val reviews = app.store.getReviews()
         remainingDue = fsrs.getQueueCounts(words, reviews).total
         emptyState = true; entry = null; card = null; parsedResult = null
+        // Push review cards to server in background
+        pushReviewsAsync(app)
+    }
+
+    private fun pushReviewsAsync(app: WordFlowApp) {
+        if (!app.store.isLoggedIn) return
+        val store = app.store
+        val client = SyncClient()
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val localCards = store.getAllReviewCards()
+                if (localCards.isNotEmpty()) {
+                    client.pushReviews(store.serverAddr, store.token, localCards)
+                }
+            } catch (_: Exception) { /* best effort */ }
+        }
     }
 
     fun reveal() { revealed = true }

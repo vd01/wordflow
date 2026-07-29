@@ -856,3 +856,160 @@ func (s *Store) ensurePairCodesTable() {
 		expires_at INTEGER NOT NULL
 	)`)
 }
+
+// ============================================================
+// Review card sync methods
+// ============================================================
+
+// ensureReviewCardsTable creates the review_cards table if it doesn't exist.
+func (s *Store) ensureReviewCardsTable() {
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS review_cards (
+		id             TEXT NOT NULL,
+		token          TEXT NOT NULL,
+		due            INTEGER NOT NULL DEFAULT 0,
+		stability      REAL NOT NULL DEFAULT 0,
+		difficulty     REAL NOT NULL DEFAULT 0,
+		elapsed_days   INTEGER NOT NULL DEFAULT 0,
+		scheduled_days INTEGER NOT NULL DEFAULT 0,
+		reps           INTEGER NOT NULL DEFAULT 0,
+		lapses         INTEGER NOT NULL DEFAULT 0,
+		state          INTEGER NOT NULL DEFAULT 0,
+		last_review    INTEGER NOT NULL DEFAULT 0,
+		learning_steps INTEGER NOT NULL DEFAULT 0,
+		updated_at     INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (id, token)
+	)`)
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_cards_token_updated
+		ON review_cards(token, updated_at)`)
+}
+
+// PushReviewCards upserts review cards for a user. Last-write-wins by last_review.
+func (s *Store) PushReviewCards(token string, cards []ReviewCard) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ensureReviewCardsTable()
+
+	// Inline token validation
+	var tokenCount int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE token = ?", token).Scan(&tokenCount); err != nil || tokenCount == 0 {
+		return 0, fmt.Errorf("invalid token")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction failed: %v", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().Unix()
+	upserted := 0
+
+	for _, card := range cards {
+		// Check if card exists and compare last_review (last write wins)
+		var existingLastReview int64
+		err := tx.QueryRow(
+			"SELECT last_review FROM review_cards WHERE id = ? AND token = ?",
+			card.ID, token,
+		).Scan(&existingLastReview)
+
+		if err == sql.ErrNoRows {
+			// New card - insert
+			_, err := tx.Exec(
+				`INSERT INTO review_cards (id, token, due, stability, difficulty, elapsed_days, scheduled_days,
+				   reps, lapses, state, last_review, learning_steps, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				card.ID, token, card.Due, card.Stability, card.Difficulty, card.ElapsedDays,
+				card.ScheduledDays, card.Reps, card.Lapses, card.State, card.LastReview,
+				card.LearningSteps, now,
+			)
+			if err != nil {
+				log.Printf("Warning: insert review card %s failed: %v", card.ID, err)
+				continue
+			}
+			upserted++
+		} else if err == nil {
+			// Existing card - only update if incoming is newer (by lastReview)
+			if card.LastReview > existingLastReview {
+				_, err := tx.Exec(
+					`UPDATE review_cards SET due=?, stability=?, difficulty=?, elapsed_days=?,
+					   scheduled_days=?, reps=?, lapses=?, state=?, last_review=?,
+					   learning_steps=?, updated_at=?
+					 WHERE id=? AND token=?`,
+					card.Due, card.Stability, card.Difficulty, card.ElapsedDays,
+					card.ScheduledDays, card.Reps, card.Lapses, card.State, card.LastReview,
+					card.LearningSteps, now,
+					card.ID, token,
+			)
+				if err != nil {
+					log.Printf("Warning: update review card %s failed: %v", card.ID, err)
+					continue
+				}
+				upserted++
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit failed: %v", err)
+	}
+
+	return upserted, nil
+}
+
+// PullReviewCards returns review cards updated after the given timestamp.
+// If since is 0, returns all cards.
+func (s *Store) PullReviewCards(token string, since int64) ([]ReviewCard, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.ensureReviewCardsTable()
+
+	// Inline token validation
+	var tokenCount int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE token = ?", token).Scan(&tokenCount); err != nil || tokenCount == 0 {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if since > 0 {
+		rows, err = s.db.Query(
+			`SELECT id, due, stability, difficulty, elapsed_days, scheduled_days,
+			        reps, lapses, state, last_review, learning_steps
+			 FROM review_cards
+			 WHERE token = ? AND updated_at > ?
+			 ORDER BY updated_at ASC`,
+			token, since,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT id, due, stability, difficulty, elapsed_days, scheduled_days,
+			        reps, lapses, state, last_review, learning_steps
+			 FROM review_cards
+			 WHERE token = ?
+			 ORDER BY updated_at ASC`,
+			token,
+		)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %v", err)
+	}
+	defer rows.Close()
+
+	var cards []ReviewCard
+	for rows.Next() {
+		var c ReviewCard
+		err := rows.Scan(&c.ID, &c.Due, &c.Stability, &c.Difficulty, &c.ElapsedDays,
+			&c.ScheduledDays, &c.Reps, &c.Lapses, &c.State, &c.LastReview, &c.LearningSteps)
+		if err != nil {
+			log.Printf("Warning: scan review card failed: %v", err)
+			continue
+		}
+		cards = append(cards, c)
+	}
+
+	return cards, nil
+}

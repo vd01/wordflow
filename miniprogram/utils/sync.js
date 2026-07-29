@@ -89,4 +89,23 @@ function push(serverAddr, token, entries) {
   })
 }
 
-module.exports = { health, getStatus, pull, push, wechatLogin, base, authHeader }
+// POST /api/v1/sync/reviews/push  (auth)
+// Push review cards to the server.
+// cards: array of FsrsCard objects
+function pushReviews(serverAddr, token, cards) {
+  return request({
+    url: base(serverAddr) + '/api/v1/sync/reviews/push',
+    method: 'POST',
+    header: authHeader(token),
+    data: { cards: cards }
+  })
+}
+
+// GET /api/v1/sync/reviews/pull?since=<unix>  (auth)
+function pullReviews(serverAddr, token, since) {
+  since = since || 0
+  const q = since > 0 ? ('?since=' + since) : ''
+  return request({ url: base(serverAddr) + '/api/v1/sync/reviews/pull' + q, header: authHeader(token) })
+}
+
+module.exports = { health, getStatus, pull, push, pushReviews, pullReviews, wechatLogin, base, authHeader }

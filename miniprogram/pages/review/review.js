@@ -1,5 +1,6 @@
 const fsrsEngine = require('../../utils/fsrs-engine')
 const store = require('../../utils/store')
+const sync = require('../../utils/sync')
 const app = getApp()
 
 Page({
@@ -164,6 +165,18 @@ Page({
       parsedResult: null,
       remainingDue
     })
+
+    // Push review cards to server in background
+    this.pushReviewsAsync()
+  },
+
+  pushReviewsAsync() {
+    const serverAddr = getApp().globalData.serverAddr
+    const token = getApp().globalData.token
+    if (!serverAddr || !token) return
+    const localCards = store.getAllReviewCards()
+    if (localCards.length === 0) return
+    sync.pushReviews(serverAddr, token, localCards).catch(() => { /* best effort */ })
   },
 
   reveal() {

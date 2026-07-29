@@ -122,6 +122,26 @@ class Store(context: Context) {
         setReviews(map)
     }
 
+    /** Merge pulled review cards into local store. Last-write-wins by lastReview. */
+    fun mergePulledReviews(cards: List<FsrsCard>): Int {
+        val local = getReviews().toMutableMap()
+        var changed = 0
+        for (card in cards) {
+            val id = card.id
+            if (id.isBlank()) continue
+            val cur = local[id]
+            if (cur == null || card.lastReview > cur.lastReview) {
+                local[id] = card
+                changed++
+            }
+        }
+        if (changed > 0) setReviews(local)
+        return changed
+    }
+
+    /** Get all review cards as a list (for pushing to server). */
+    fun getAllReviewCards(): List<FsrsCard> = getReviews().values.toList()
+
     // ── Daily new card count ──
 
     private fun todayStr(): String {

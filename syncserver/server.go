@@ -64,6 +64,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/sync/pull", s.handlePull)
 	mux.HandleFunc("/api/v1/sync/delete", s.handleDelete)
 
+	// Review state sync routes
+	mux.HandleFunc("/api/v1/sync/reviews/push", s.handleReviewPush)
+	mux.HandleFunc("/api/v1/sync/reviews/pull", s.handleReviewPull)
+
 	// WeChat QR code auth routes
 	mux.HandleFunc("/api/v1/auth/qrcode/request", s.handleQrCodeRequest)
 	mux.HandleFunc("/api/v1/auth/qrcode/status", s.handleQrCodeStatus)
@@ -105,6 +109,8 @@ func (s *Server) Start() error {
 	log.Printf("  POST /api/v1/sync/push            - Push word data to server")
 	log.Printf("  GET  /api/v1/sync/pull            - Pull word data (incremental sync)")
 	log.Printf("  POST /api/v1/sync/delete          - Delete entry")
+	log.Printf("  POST /api/v1/sync/reviews/push   - Push review state")
+	log.Printf("  GET  /api/v1/sync/reviews/pull   - Pull review state")
 	log.Printf("  GET  /api/v1/health               - Health check")
 	if s.appID != "" {
 		log.Printf("  WeChat AppID: %s", s.appID)
@@ -993,6 +999,119 @@ func (s *Server) handleEmailCodeVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token":   token,
 		"message": "Login successful",
+	})
+}
+
+// ============================================================
+// Review state sync handlers
+// ============================================================
+
+// ReviewCard represents a client's FSRS review state for a word.
+type ReviewCard struct {
+	ID            string  `json:"id"`            // Same as SyncEntry.ID (word ID)
+	Due           int64   `json:"due"`           // Epoch millis
+	Stability     float64 `json:"stability"`
+	Difficulty    float64 `json:"difficulty"`
+	ElapsedDays   int     `json:"elapsedDays"`
+	ScheduledDays int     `json:"scheduledDays"`
+	Reps          int     `json:"reps"`
+	Lapses        int     `json:"lapses"`
+	State         int     `json:"state"`         // 0=New,1=Learning,2=Review,3=Relearning
+	LastReview    int64   `json:"lastReview"`    // Epoch millis
+	LearningSteps int     `json:"learningSteps"`
+}
+
+// handleReviewPush pushes review cards from client to server.
+// POST /api/v1/sync/reviews/push
+// Body: { "cards": [...] }
+func (s *Server) handleReviewPush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Only POST method is supported")
+		return
+	}
+
+	token := tokenFromContext(r.Context())
+
+	r.Body = http.MaxBytesReader(w, r.Body, 10*1024*1024)
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Cards []ReviewCard `json:"cards"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON parse failed: "+err.Error())
+		return
+	}
+
+	if len(req.Cards) == 0 {
+		writeError(w, http.StatusBadRequest, "cards cannot be empty")
+		return
+	}
+
+	if len(req.Cards) > 1000 {
+		writeError(w, http.StatusBadRequest, "Max 1000 cards per push")
+		return
+	}
+
+	log.Printf("SYNC  review push: token=%s..., cards=%d", token[:min(8, len(token))], len(req.Cards))
+
+	upserted, err := s.store.PushReviewCards(token, req.Cards)
+	if err != nil {
+		log.Printf("SYNC  review push FAILED: token=%s..., error=%v", token[:min(8, len(token))], err)
+		writeError(w, http.StatusInternalServerError, "Push failed: "+err.Error())
+		return
+	}
+
+	log.Printf("SYNC  review push OK: token=%s..., total=%d, upserted=%d", token[:min(8, len(token))], len(req.Cards), upserted)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"upserted": upserted,
+		"total":    len(req.Cards),
+		"message":  fmt.Sprintf("Synced %d review cards", upserted),
+	})
+}
+
+// handleReviewPull pulls review cards from server to client.
+// GET /api/v1/sync/reviews/pull?since=<unix>
+func (s *Server) handleReviewPull(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, http.StatusMethodNotAllowed, "Only GET method is supported")
+		return
+	}
+
+	token := tokenFromContext(r.Context())
+
+	var since int64 = 0
+	if sv := r.URL.Query().Get("since"); sv != "" {
+		if _, err := fmt.Sscanf(sv, "%d", &since); err != nil {
+			writeError(w, http.StatusBadRequest, "since parameter should be a Unix timestamp")
+			return
+		}
+	}
+
+	cards, err := s.store.PullReviewCards(token, since)
+	if err != nil {
+		log.Printf("SYNC  review pull FAILED: token=%s..., since=%d, error=%v", token[:min(8, len(token))], since, err)
+		writeError(w, http.StatusInternalServerError, "Pull failed: "+err.Error())
+		return
+	}
+
+	if cards == nil {
+		cards = []ReviewCard{}
+	}
+
+	log.Printf("SYNC  review pull OK: token=%s..., since=%d, returned=%d cards",
+		token[:min(8, len(token))], since, len(cards))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"cards":     cards,
+		"serverNow": time.Now().Unix(),
 	})
 }
 

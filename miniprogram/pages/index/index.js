@@ -204,10 +204,19 @@ Page({
     this.setData({ busy: true, status: 'Syncing...' })
     try {
       const effectiveSince = since !== undefined ? since : (store.getLastSync() || 0)
+      // Pull words
       const res = await sync.pull(serverAddr, token, effectiveSince)
       const r = store.mergePulled(res.entries || [], res.serverNow, effectiveSince === 0)
+      // Pull review cards
+      const reviewRes = await sync.pullReviews(serverAddr, token, effectiveSince)
+      const reviewChanged = store.mergePulledReviews(reviewRes.cards || [])
+      // Push local review cards
+      const localCards = store.getAllReviewCards()
+      if (localCards.length > 0) {
+        await sync.pushReviews(serverAddr, token, localCards)
+      }
       this.setData({
-        status: 'Synced ' + r.changed + ' entries, local total: ' + r.total,
+        status: 'Synced ' + r.changed + ' entries, ' + reviewChanged + ' reviews',
         ...refreshCounts()
       })
     } catch (e) {

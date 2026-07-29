@@ -62,6 +62,12 @@ data class PairCodeRequest(
     val code: String
 )
 
+/** Pull response for review cards. */
+data class ReviewPullResponse(
+    val cards: List<FsrsCard> = emptyList(),
+    val serverNow: Long = 0
+)
+
 /** Parsed result from a SyncEntry's result JSON. */
 data class ParsedResult(
     val word: String = "",

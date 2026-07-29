@@ -49,6 +49,24 @@ class SyncClient {
         return obj.get("upserted")?.asInt ?: 0
     }
 
+    // ── Review state sync ──
+
+    /** Push review cards to server. Returns number of cards upserted. */
+    fun pushReviews(serverAddr: String, token: String, cards: List<FsrsCard>): Int {
+        val url = base(serverAddr) + "/api/v1/sync/reviews/push"
+        val body = gson.toJson(mapOf("cards" to cards))
+        val json = post(url, body, token)
+        val obj = JsonParser.parseString(json).asJsonObject
+        return obj.get("upserted")?.asInt ?: 0
+    }
+
+    /** Pull review cards from server. */
+    fun pullReviews(serverAddr: String, token: String, since: Long): ReviewPullResponse {
+        val q = if (since > 0) "?since=$since" else ""
+        val url = base(serverAddr) + "/api/v1/sync/reviews/pull$q"
+        return get(url, ReviewPullResponse::class.java, token)
+    }
+
     // ── Email Auth ──
 
     /** Request a verification code be sent to the given email. */
