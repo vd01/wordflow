@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -129,53 +130,60 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     LaunchedEffect(vm.loginSuccess) { if (vm.loginSuccess) onLoginSuccess() }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Dimens_sm),
+                .imePadding(),
+            contentAlignment = Alignment.Center,
         ) {
-            // Logo mark
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape, modifier = Modifier.size(72.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Dimens_sm),
+            ) {
+                // Logo mark
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape, modifier = Modifier.size(72.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("查词温故", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text("WordFlow", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("记住每一个单词", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-            Spacer(Modifier.height(16.dp))
-            TabRow(selectedTabIndex = if (vm.loginMode == LoginMode.EMAIL) 0 else 1) {
-                Tab(
-                    selected = vm.loginMode == LoginMode.EMAIL,
-                    onClick = { vm.loginMode = LoginMode.EMAIL; vm.status = "" },
-                    text = { Text("邮箱") },
-                    icon = { Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                )
-                Tab(
-                    selected = vm.loginMode == LoginMode.PAIR,
-                    onClick = { vm.loginMode = LoginMode.PAIR; vm.status = "" },
-                    text = { Text("配对码") },
-                    icon = { Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-            when (vm.loginMode) {
-                LoginMode.EMAIL -> EmailLoginSection(vm, app)
-                LoginMode.PAIR -> PairCodeLoginSection(vm, app)
-            }
-
-            if (vm.status.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
-                StatusBanner(text = vm.status, kind = vm.statusKind)
+                Text("查词温故", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("WordFlow", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("记住每一个单词", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                Spacer(Modifier.height(16.dp))
+                TabRow(selectedTabIndex = if (vm.loginMode == LoginMode.EMAIL) 0 else 1) {
+                    Tab(
+                        selected = vm.loginMode == LoginMode.EMAIL,
+                        onClick = { vm.loginMode = LoginMode.EMAIL; vm.status = "" },
+                        text = { Text("邮箱") },
+                        icon = { Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    )
+                    Tab(
+                        selected = vm.loginMode == LoginMode.PAIR,
+                        onClick = { vm.loginMode = LoginMode.PAIR; vm.status = "" },
+                        text = { Text("配对码") },
+                        icon = { Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                when (vm.loginMode) {
+                    LoginMode.EMAIL -> EmailLoginSection(vm, app)
+                    LoginMode.PAIR -> PairCodeLoginSection(vm, app)
+                }
+
+                if (vm.status.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    StatusBanner(text = vm.status, kind = vm.statusKind)
+                }
+                Spacer(Modifier.height(48.dp))
             }
-            Spacer(Modifier.height(48.dp))
         }
     }
 }
