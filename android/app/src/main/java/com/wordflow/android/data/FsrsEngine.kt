@@ -275,6 +275,7 @@ class FsrsEngine(
 
     /** Retrievability: probability of recall after t days. */
     private fun forgettingCurve(elapsedDays: Int, stability: Double): Double {
+        if (stability <= 0.0) return 0.0
         return roundTo((1.0 + factor * elapsedDays / stability).pow(decay), 8)
     }
 
@@ -373,8 +374,9 @@ class FsrsEngine(
         return nowMs + minutes * 60L * 1000
     }
 
-    /** Round to N decimal places. */
+    /** Round to N decimal places. Guards against NaN/Infinity. */
     private fun roundTo(v: Double, decimals: Int): Double {
+        if (v.isNaN() || v.isInfinite()) return 0.0
         val f = 10.0.pow(decimals)
         return round(v * f) / f
     }
