@@ -2,6 +2,7 @@ package com.wordflow.android.data
 
 import java.util.Date
 import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -100,7 +101,8 @@ class FsrsEngine(
     private val relearningSteps: List<Int> = listOf(10),         // minutes
 ) {
     private val decay: Double = -w[20]  // FSRS-6 default: 0.1542
-    private val factor: Double = (exp(1.0 / decay) * 0.9 - 1.0).let { roundTo(it, 8) }
+    // Must match ts-fsrs computeDecayFactor: exp(decay^-1 * ln(0.9)) - 1 == exp(ln(0.9)/decay) - 1
+    private val factor: Double = (exp(ln(0.9) / decay) - 1.0).let { roundTo(it, 8) }
     private val intervalModifier: Double = calculateIntervalModifier()
 
     // ── Public API ──
@@ -285,14 +287,15 @@ class FsrsEngine(
         return (diffMs / (24.0 * 60 * 60 * 1000)).toInt().coerceAtLeast(0)
     }
 
-    /** S_0(G) = w[G-1], clamped to [0.1, 100] */
+    /** S_0(G) = w[G-1]. ts-fsrs only clamps the lower bound at 0.1 (Math.max). */
     private fun initStability(g: Int): Double {
-        return w[g - 1].coerceIn(0.1, 100.0)
+        return max(w[g - 1], 0.1)
     }
 
-    /** D_0(G) = w[4] - exp((G-1) * w[5]) + 1, clamped to [1, 10] */
+    /** D_0(G) = w[4] - exp((G-1) * w[5]) + 1. ts-fsrs does NOT clamp here;
+     *  clamping to [1, 10] happens at the call sites (nextState / nextDifficulty). */
     private fun initDifficulty(g: Int): Double {
-        return roundTo(w[4] - exp((g - 1.0) * w[5]) + 1.0, 8).coerceIn(1.0, 10.0)
+        return roundTo(w[4] - exp((g - 1.0) * w[5]) + 1.0, 8)
     }
 
     /** Linear damping: delta_d * (10 - old_d) / 9 */

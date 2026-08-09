@@ -1,5 +1,6 @@
 package com.wordflow.android.ui.components
 
+import android.content.Context
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -9,61 +10,92 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import java.util.Locale
 
 private const val TAG = "AudioBtn"
 
 /**
- * Plays word pronunciation.
+ * Speaks word pronunciation.
  *
  * Strategy:
  * 1. Try Android TTS (works offline, low latency).
  * 2. If TTS engine is unavailable, use Youdao TTS (internet required).
+ *
+ * Owns a lazily-created [TextToSpeech] engine; call [release] when done
+ * (e.g. from a DisposableEffect) to stop and shut it down.
  */
-@Composable
-fun AudioButton(text: String, modifier: Modifier = Modifier) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var engine by remember { mutableStateOf<TextToSpeech?>(null) }
+class TtsSpeaker(private val context: Context) {
+    private var engine: TextToSpeech? = null
+    private var initializing = false
+    private val pending = mutableListOf<String>()
 
-    DisposableEffect(Unit) {
-        onDispose {
-            engine?.stop()
-            engine?.shutdown()
+    /** Speak a word. Safe to call before TTS finishes initializing (queued until ready). */
+    fun speak(text: String) {
+        val word = text.trim().lowercase()
+        if (word.isEmpty()) return
+
+        val e = engine
+        if (e != null) {
+            speakNow(e, word)
+            return
+        }
+        // Not ready yet: queue the word; a single lazy init will flush everything.
+        pending.add(word)
+        if (initializing) return
+        initializing = true
+        try {
+            lateinit var tts: TextToSpeech
+            tts = TextToSpeech(context) { status ->
+                initializing = false
+                if (status == TextToSpeech.SUCCESS) {
+                    engine = tts
+                    val queued = pending.toList()
+                    pending.clear()
+                    queued.forEach { speakNow(tts, it) }
+                } else {
+                    Log.w(TAG, "TTS unavailable (status=$status), using Youdao TTS")
+                    val last = pending.lastOrNull() ?: word
+                    pending.clear()
+                    playYoudao(last)
+                }
+            }
+        } catch (_: Exception) {
+            initializing = false
+            val last = pending.lastOrNull() ?: word
+            pending.clear()
+            playYoudao(last)
         }
     }
 
+    /** Stop playback and release the TTS engine. */
+    fun release() {
+        pending.clear()
+        initializing = false
+        engine?.stop()
+        engine?.shutdown()
+        engine = null
+    }
+}
+
+/** Creates a [TtsSpeaker] tied to this composable's lifecycle (released on dispose). */
+@Composable
+fun rememberTtsSpeaker(): TtsSpeaker {
+    val context = LocalContext.current.applicationContext
+    val speaker = remember { TtsSpeaker(context) }
+    DisposableEffect(Unit) {
+        onDispose { speaker.release() }
+    }
+    return speaker
+}
+
+/** Manual pronunciation button. */
+@Composable
+fun AudioButton(speaker: TtsSpeaker, text: String, modifier: Modifier = Modifier) {
     IconButton(
-        onClick = {
-            val word = text.trim().lowercase()
-            if (word.isEmpty()) return@IconButton
-
-            // Priority 1: Android TTS (works offline)
-            if (engine != null) {
-                speakNow(engine!!, word)
-                return@IconButton
-            }
-
-            // Priority 2: create TTS lazily
-            try {
-                lateinit var tts: TextToSpeech
-                tts = TextToSpeech(context) { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        engine = tts
-                        speakNow(tts, word)
-                    } else {
-                        Log.w(TAG, "TTS unavailable (status=$status), using Youdao TTS")
-                        playYoudao(word)
-                    }
-                }
-            } catch (_: Exception) {
-                playYoudao(word)
-            }
-        },
+        onClick = { speaker.speak(text) },
         modifier = modifier,
     ) {
         Icon(Icons.Default.VolumeUp, contentDescription = "播放发音")

@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.wordflow.android.WordFlowApp
 import com.wordflow.android.data.FsrsEngine
 import com.wordflow.android.ui.components.AudioButton
+import com.wordflow.android.ui.components.rememberTtsSpeaker
 import com.wordflow.android.ui.components.DefinitionBlock
 import com.wordflow.android.ui.components.MetaBadges
 import com.wordflow.android.ui.components.SectionBlock
@@ -50,6 +51,7 @@ import kotlin.math.ceil
 fun WordDetailScreen(wordId: String, onBack: () -> Unit) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val fsrs = remember { FsrsEngine() }
+    val speaker = rememberTtsSpeaker()
 
     val entry = remember { app.store.getWord(wordId) }
     val parsedResult = entry?.let { app.store.parseResult(it) }
@@ -80,7 +82,7 @@ fun WordDetailScreen(wordId: String, onBack: () -> Unit) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
                 actions = {
-                    if (parsedResult != null) AudioButton(text = parsedResult.word)
+                    if (parsedResult != null) AudioButton(speaker = speaker, text = parsedResult.word)
                 },
             )
         },

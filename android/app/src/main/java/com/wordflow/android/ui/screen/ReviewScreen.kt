@@ -11,6 +11,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -63,7 +66,9 @@ import com.wordflow.android.data.RATING_GOOD
 import com.wordflow.android.data.RATING_HARD
 import com.wordflow.android.data.SyncEntry
 import com.wordflow.android.ui.components.AudioButton
+import com.wordflow.android.ui.components.TtsSpeaker
 import com.wordflow.android.ui.components.DefinitionBlock
+import com.wordflow.android.ui.components.rememberTtsSpeaker
 import com.wordflow.android.ui.components.FlashCard
 import com.wordflow.android.ui.components.MetaBadges
 import com.wordflow.android.ui.components.RatingButtonRow
@@ -238,6 +243,7 @@ class ReviewViewModel : ViewModel() {
 fun ReviewScreen(onBack: () -> Unit, onGoSettings: () -> Unit) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val vm: ReviewViewModel = viewModel()
+    val speaker = rememberTtsSpeaker()
 
     LaunchedEffect(Unit) { vm.buildQueue(app) }
 
@@ -294,7 +300,7 @@ fun ReviewScreen(onBack: () -> Unit, onGoSettings: () -> Unit) {
                             transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
                             label = "reveal",
                         ) { revealed ->
-                            if (revealed) BackCard(vm) else FrontCard(vm)
+                            if (revealed) BackCard(vm, speaker) else FrontCard(vm, speaker)
                         }
                     }
                     AnimatedVisibility(visible = vm.revealed) {
@@ -309,9 +315,18 @@ fun ReviewScreen(onBack: () -> Unit, onGoSettings: () -> Unit) {
 }
 
 @Composable
-private fun FrontCard(vm: ReviewViewModel) {
+private fun FrontCard(vm: ReviewViewModel, speaker: TtsSpeaker) {
     val entry = vm.entry ?: return
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // Auto-play pronunciation whenever a new front card is shown
+    LaunchedEffect(entry.word) { speaker.speak(entry.word) }
+    // Whole area is tappable to reveal (blank space + card itself)
+    val revealInteraction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(interactionSource = revealInteraction, indication = null) { vm.reveal() },
+        contentAlignment = Alignment.Center,
+    ) {
         FlashCard(onClick = { vm.reveal() }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(vertical = Dimens.xl),
@@ -323,7 +338,7 @@ private fun FrontCard(vm: ReviewViewModel) {
                     vm.parsedResult?.phonetic?.takeIf { it.isNotBlank() }?.let {
                         Text(formatPhonetic(it), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    AudioButton(text = entry.word)
+                    AudioButton(speaker = speaker, text = entry.word)
                 }
                 Spacer(Modifier.height(Dimens.xl))
                 Text("轻点卡片查看答案", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -333,7 +348,7 @@ private fun FrontCard(vm: ReviewViewModel) {
 }
 
 @Composable
-private fun BackCard(vm: ReviewViewModel) {
+private fun BackCard(vm: ReviewViewModel, speaker: TtsSpeaker) {
     val entry = vm.entry ?: return
     val pr = vm.parsedResult
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -345,7 +360,7 @@ private fun BackCard(vm: ReviewViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(entry.word, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-                    AudioButton(text = entry.word)
+                    AudioButton(speaker = speaker, text = entry.word)
                 }
                 pr?.phonetic?.takeIf { it.isNotBlank() }?.let {
                     Text(formatPhonetic(it), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
