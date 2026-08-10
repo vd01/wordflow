@@ -321,12 +321,13 @@ private fun FrontCard(vm: ReviewViewModel, speaker: TtsSpeaker) {
     LaunchedEffect(entry.word) { speaker.speak(entry.word) }
     // Whole area is tappable to reveal (blank space + card itself)
     val revealInteraction = remember { MutableInteractionSource() }
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .clickable(interactionSource = revealInteraction, indication = null) { vm.reveal() },
-        contentAlignment = Alignment.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Spacer(Modifier.weight(0.2f))
         FlashCard(onClick = { vm.reveal() }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(vertical = Dimens.xl),
@@ -344,6 +345,7 @@ private fun FrontCard(vm: ReviewViewModel, speaker: TtsSpeaker) {
                 Text("轻点卡片查看答案", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        Spacer(Modifier.weight(1f))
     }
 }
 
