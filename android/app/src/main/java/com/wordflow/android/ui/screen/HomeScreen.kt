@@ -27,9 +27,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -59,6 +59,8 @@ import com.wordflow.android.data.STATE_REVIEW
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class HomeStatus(val text: String, val kind: StatusKind)
 
@@ -73,9 +75,12 @@ class HomeViewModel : ViewModel() {
     var dailyNewCount by mutableStateOf(0)
     var dailyLimit by mutableStateOf(0)
     var status by mutableStateOf<HomeStatus?>(null)
+    var isSyncing by mutableStateOf(false)
+        private set
 
     private val client = SyncClient()
     private val fsrs = FsrsEngine()
+    private val syncMutex = Mutex()
 
     fun refresh(app: WordFlowApp) {
         val store = app.store
@@ -99,26 +104,33 @@ class HomeViewModel : ViewModel() {
         val store = app.store
         if (!store.isLoggedIn) return
         viewModelScope.launch {
-            try {
-                val since = store.lastSync
-                // Pull words + review cards from server
-                val (wordRes, reviewRes) = withContext(Dispatchers.IO) {
-                    val wr = client.pull(store.serverAddr, store.token, since)
-                    val rr = client.pullReviews(store.serverAddr, store.token, since)
-                    Pair(wr, rr)
-                }
-                store.mergePulled(wordRes.entries, wordRes.serverNow, since == 0L)
-                store.mergePulledReviews(reviewRes.cards)
-                // Push local review cards to server
-                withContext(Dispatchers.IO) {
-                    val localCards = store.getAllReviewCards()
-                    if (localCards.isNotEmpty()) {
-                        client.pushReviews(store.serverAddr, store.token, localCards)
+            syncMutex.withLock {
+                if (isSyncing) return@launch
+                isSyncing = true
+                status = null
+                try {
+                    val since = store.lastSync
+                    // Pull words + review cards from server
+                    val (wordRes, reviewRes) = withContext(Dispatchers.IO) {
+                        val wr = client.pull(store.serverAddr, store.token, since)
+                        val rr = client.pullReviews(store.serverAddr, store.token, since)
+                        Pair(wr, rr)
                     }
+                    store.mergePulled(wordRes.entries, wordRes.serverNow, since == 0L)
+                    store.mergePulledReviews(reviewRes.cards)
+                    // Push local review cards to server
+                    withContext(Dispatchers.IO) {
+                        val localCards = store.getAllReviewCards()
+                        if (localCards.isNotEmpty()) {
+                            client.pushReviews(store.serverAddr, store.token, localCards)
+                        }
+                    }
+                    refresh(app)
+                } catch (e: Exception) {
+                    status = HomeStatus("同步失败：${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
+                } finally {
+                    isSyncing = false
                 }
-                refresh(app)
-            } catch (e: Exception) {
-                status = HomeStatus("同步失败：${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
             }
         }
     }
@@ -152,20 +164,16 @@ fun HomeScreen(
     val vm: HomeViewModel = viewModel()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Refresh every time the screen becomes visible (navigate back, reopen app, etc.)
+    // Sync every time the screen becomes visible (navigate back, reopen app, etc.)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 vm.refresh(app)
+                if (app.store.isLoggedIn && !vm.isSyncing) vm.sync(app)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // Initial sync on first load
-    LaunchedEffect(Unit) {
-        if (app.store.isLoggedIn) vm.sync(app)
     }
 
     Scaffold(
@@ -182,10 +190,16 @@ fun HomeScreen(
             )
         },
     ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = vm.isSyncing,
+            onRefresh = { vm.sync(app) },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(Dimens.screenPadding),
             verticalArrangement = Arrangement.spacedBy(Dimens.lg),
@@ -240,7 +254,11 @@ fun HomeScreen(
             }
 
             // Sync status line
-            Text("已${vm.lastSyncDisplay}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (vm.isSyncing) {
+                StatusBanner(text = "正在同步…", kind = StatusKind.LOADING)
+            } else {
+                Text("已${vm.lastSyncDisplay}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
 
             // Stats
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md)) {
@@ -284,6 +302,7 @@ fun HomeScreen(
             vm.status?.let { StatusBanner(text = it.text, kind = it.kind) }
 
             Spacer(Modifier.height(Dimens.lg))
+        }
         }
     }
 }
