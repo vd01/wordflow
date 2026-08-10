@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,6 +169,9 @@ func (s *Store) migrate() error {
 	// Clean up expired auth sessions
 	s.cleanExpiredAuthSessions()
 
+	// Migrate: lowercase all capitalized words in sync_entries and review_cards
+	s.migrateLowercaseWords()
+
 	return nil
 }
 
@@ -186,6 +190,270 @@ func (s *Store) migrateAddColumn(table, column, definition string) {
 			log.Printf("Migration: added column %s.%s", table, column)
 		}
 	}
+}
+
+// migrateLowercaseWords fixes existing data where words were stored with capital letters.
+// For each table (sync_entries, review_cards), it:
+// 1. Finds all rows where word/id contains uppercase letters
+// 2. Lowercases the word/id
+// 3. For duplicate entries that collapse to the same lowercase word, keeps the newest
+// 4. Also lowercases the "word" field inside the result JSON for sync_entries
+func (s *Store) migrateLowercaseWords() {
+	// Use a migration flag to ensure this only runs once
+	var migrated int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sync_entries') WHERE name = 'word_lowercased'").Scan(&migrated)
+	if err != nil {
+		log.Printf("Warning: check word_lowercased flag failed: %v", err)
+		return
+	}
+	if migrated > 0 {
+		// Already migrated
+		return
+	}
+
+	log.Printf("Migration: lowercasing capitalized words in sync_entries...")
+
+	// ── Fix sync_entries ──
+	// Step 1: Find all entries where word != LOWER(word)
+	rows, err := s.db.Query(
+		"SELECT id, token, word, result, created_at, updated_at, deleted FROM sync_entries WHERE word != LOWER(word)",
+	)
+	if err != nil {
+		log.Printf("Warning: query uppercase sync_entries failed: %v", err)
+		return
+	}
+
+	type entry struct {
+		id        string
+		token     string
+		word      string
+		result    string
+		createdAt int64
+		updatedAt int64
+		deleted   int
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.id, &e.token, &e.word, &e.result, &e.createdAt, &e.updatedAt, &e.deleted); err != nil {
+			log.Printf("Warning: scan entry failed: %v", err)
+			continue
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+
+	if len(entries) == 0 {
+		log.Printf("Migration: no capitalized words found in sync_entries")
+	} else {
+		log.Printf("Migration: found %d capitalized words in sync_entries", len(entries))
+
+		// Group by (token, lowercase_word) to detect duplicates
+		type groupKey struct {
+			token string
+			word  string
+		}
+		groups := make(map[groupKey][]entry)
+		for _, e := range entries {
+			key := groupKey{token: e.token, word: strings.ToLower(e.word)}
+			groups[key] = append(groups[key], e)
+		}
+
+		// For each group, keep the newest entry and delete the rest
+		for _, group := range groups {
+			if len(group) == 1 {
+				// No duplicate — just update the word and result JSON
+				e := group[0]
+				lowerResult := lowercaseResultJSON(e.result, strings.ToLower(e.word))
+				_, err := s.db.Exec(
+					"UPDATE sync_entries SET word = ?, result = ? WHERE id = ? AND token = ?",
+					strings.ToLower(e.word), lowerResult, e.id, e.token,
+				)
+				if err != nil {
+					log.Printf("Warning: update word for id=%s failed: %v", e.id, err)
+				}
+				continue
+			}
+
+			// Multiple entries collapse to same lowercase word — keep newest, delete rest
+			// Sort by updated_at descending (newest first)
+			for i := 1; i < len(group); i++ {
+				for j := i; j > 0 && group[j].updatedAt > group[j-1].updatedAt; j-- {
+					group[j], group[j-1] = group[j-1], group[j]
+				}
+			}
+
+			// Keep group[0] (newest), delete the rest
+			keeper := group[0]
+			lowerResult := lowercaseResultJSON(keeper.result, strings.ToLower(keeper.word))
+			_, err := s.db.Exec(
+				"UPDATE sync_entries SET word = ?, result = ? WHERE id = ? AND token = ?",
+				strings.ToLower(keeper.word), lowerResult, keeper.id, keeper.token,
+			)
+			if err != nil {
+				log.Printf("Warning: update word for id=%s failed: %v", keeper.id, err)
+			}
+
+			for _, dup := range group[1:] {
+				_, err := s.db.Exec(
+					"DELETE FROM sync_entries WHERE id = ? AND token = ?",
+					dup.id, dup.token,
+				)
+				if err != nil {
+					log.Printf("Warning: delete duplicate id=%s failed: %v", dup.id, err)
+				}
+				log.Printf("Migration: merged duplicate word %q → %q (kept id=%s, deleted id=%s)",
+					keeper.word, strings.ToLower(keeper.word), keeper.id, dup.id)
+			}
+		}
+
+		log.Printf("Migration: lowercased %d words in sync_entries (%d duplicates merged)",
+			len(entries), len(entries)-len(groups))
+	}
+
+	// ── Fix review_cards ──
+	// review_cards use id as the word identifier; lowercase if needed
+	s.ensureReviewCardsTable()
+
+	reviewRows, err := s.db.Query(
+		"SELECT id, token FROM review_cards WHERE id != LOWER(id)",
+	)
+	if err != nil {
+		log.Printf("Warning: query uppercase review_cards failed: %v", err)
+	} else {
+		type reviewEntry struct {
+			id    string
+			token string
+		}
+		var reviewEntries []reviewEntry
+		for reviewRows.Next() {
+			var re reviewEntry
+			if err := reviewRows.Scan(&re.id, &re.token); err != nil {
+				log.Printf("Warning: scan review card failed: %v", err)
+				continue
+			}
+			reviewEntries = append(reviewEntries, re)
+		}
+		reviewRows.Close()
+
+		if len(reviewEntries) == 0 {
+			log.Printf("Migration: no capitalized ids found in review_cards")
+		} else {
+			log.Printf("Migration: found %d capitalized ids in review_cards", len(reviewEntries))
+
+			// Group by (token, lowercase_id) to detect duplicates
+			type reviewGroupKey struct {
+				token string
+				id    string
+			}
+			reviewGroups := make(map[reviewGroupKey][]reviewEntry)
+			for _, re := range reviewEntries {
+				key := reviewGroupKey{token: re.token, id: strings.ToLower(re.id)}
+				reviewGroups[key] = append(reviewGroups[key], re)
+			}
+
+			for _, group := range reviewGroups {
+				if len(group) == 1 {
+					// No duplicate — just update the id
+					re := group[0]
+					// Check if the lowercase id already exists
+					var count int
+					s.db.QueryRow("SELECT COUNT(*) FROM review_cards WHERE id = ? AND token = ?",
+						strings.ToLower(re.id), re.token).Scan(&count)
+					if count > 0 {
+						// Lowercase entry already exists — delete the uppercase one
+						_, err := s.db.Exec("DELETE FROM review_cards WHERE id = ? AND token = ?",
+							re.id, re.token)
+						if err != nil {
+							log.Printf("Warning: delete duplicate review_card id=%s failed: %v", re.id, err)
+						}
+						log.Printf("Migration: removed duplicate review_card id=%s (lowercase already exists)", re.id)
+					} else {
+						// Safe to just update
+						_, err := s.db.Exec("UPDATE review_cards SET id = ? WHERE id = ? AND token = ?",
+							strings.ToLower(re.id), re.id, re.token)
+						if err != nil {
+							log.Printf("Warning: update review_card id=%s failed: %v", re.id, err)
+						}
+					}
+					continue
+				}
+
+				// Multiple entries collapse to same lowercase id
+				// For review cards, keep the one with the latest last_review
+				// We need to query last_review for each
+				var keeperIdx int
+				var maxLastReview int64
+				for i, re := range group {
+					var lastReview int64
+					s.db.QueryRow("SELECT last_review FROM review_cards WHERE id = ? AND token = ?",
+						re.id, re.token).Scan(&lastReview)
+					if lastReview > maxLastReview {
+						maxLastReview = lastReview
+						keeperIdx = i
+					}
+				}
+
+				// Update the keeper's id to lowercase
+				keeper := group[keeperIdx]
+				_, err := s.db.Exec("UPDATE review_cards SET id = ? WHERE id = ? AND token = ?",
+					strings.ToLower(keeper.id), keeper.id, keeper.token)
+				if err != nil {
+					log.Printf("Warning: update review_card id=%s failed: %v", keeper.id, err)
+				}
+
+				// Delete the rest
+				for i, dup := range group {
+					if i == keeperIdx {
+						continue
+					}
+					_, err := s.db.Exec("DELETE FROM review_cards WHERE id = ? AND token = ?",
+						dup.id, dup.token)
+					if err != nil {
+						log.Printf("Warning: delete duplicate review_card id=%s failed: %v", dup.id, err)
+					}
+					log.Printf("Migration: merged duplicate review_card %q → %q",
+						dup.id, strings.ToLower(dup.id))
+				}
+			}
+
+			log.Printf("Migration: lowercased %d ids in review_cards (%d duplicates merged)",
+				len(reviewEntries), len(reviewEntries)-len(reviewGroups))
+		}
+	}
+
+	// Mark migration as done by adding a dummy column
+	// (We use a column as a flag since SQLite doesn't support migration metadata tables easily)
+	_, err = s.db.Exec("ALTER TABLE sync_entries ADD COLUMN word_lowercased INTEGER NOT NULL DEFAULT 1")
+	if err != nil {
+		log.Printf("Warning: add word_lowercased flag failed: %v", err)
+		// Column might already exist if migration ran partially; that's OK
+	}
+
+	log.Printf("Migration: lowercase words migration complete")
+}
+
+// lowercaseResultJSON lowercases the "word" field inside a result JSON string.
+// If the JSON is invalid or doesn't contain a "word" field, returns the original string.
+func lowercaseResultJSON(result string, lowerWord string) string {
+	if result == "" {
+		return result
+	}
+	// Simple string replacement for the "word":"..." field
+	// This is safer than full JSON parse/serialize for potentially large blobs
+	// Match "word":"<value>" and replace the value
+	idx := strings.Index(result, `"word":"`)
+	if idx == -1 {
+		return result
+	}
+	// Find the end of the value
+	start := idx + len(`"word":"`)
+	end := strings.Index(result[start:], `"`)
+	if end == -1 {
+		return result
+	}
+	end += start
+	return result[:start] + lowerWord + result[end:]
 }
 
 // Close closes the database

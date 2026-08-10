@@ -247,6 +247,11 @@ function speakTTS(word: string) {
 // ============================================================
 async function doSearch(word: string) {
     word = word.trim();
+    // Auto-lowercase: if the word contains any capital letters, convert to all lowercase
+    // (e.g. clipboard text "Hello"/"HELLO"/"HeLLo" → "hello", capitals from sentence-start or caps-lock are not meaningful for lookup)
+    if (word.length > 0 && word !== word.toLowerCase()) {
+        word = word.toLowerCase();
+    }
     if (!word) {
         showToast("请输入要查询的单词");
         return;

@@ -988,6 +988,10 @@ func (d *DictService) LookupWordFast(word string) string {
 	if d.ecdict == nil {
 		return ""
 	}
+	word = strings.TrimSpace(word)
+	if word != strings.ToLower(word) {
+		word = strings.ToLower(word)
+	}
 	start := time.Now()
 	entry := d.ecdict.LookupEcdict(word)
 	elapsed := time.Since(start)
@@ -1178,6 +1182,9 @@ func (d *DictService) lookupWordLLMInternal(word string, includeEcdict bool) (st
 		return "", ErrLLMNotConfigured
 	}
 	word = strings.TrimSpace(word)
+	if word != strings.ToLower(word) {
+		word = strings.ToLower(word)
+	}
 	if word == "" {
 		return "", fmt.Errorf("请输入要查询的单词或短语")
 	}
@@ -1748,6 +1755,11 @@ func (d *DictService) registerShortcut() {
 			log.Printf("[CLIPBOARD-DEBUG] Shortcut pressed, clipboard: ok=%v text=%q", ok, truncate(text, 50))
 			if ok && isEnglishText(text) {
 				word := strings.TrimSpace(text)
+				// Auto-lowercase: if the word contains any capital letters, convert to all lowercase
+				// (capitals from sentence-start or caps-lock are not meaningful for dictionary lookup)
+				if len(word) > 0 && word != strings.ToLower(word) {
+					word = strings.ToLower(word)
+				}
 				log.Printf("[CLIPBOARD-DEBUG] Emitting clipboard-english-detected: %q", word)
 				d.app.Event.Emit("clipboard-english-detected", word)
 			} else {
@@ -1853,6 +1865,9 @@ func (h *HistoryService) openDB() error {
 	// Migrate from old JSON history if it exists and DB is empty
 	h.migrateFromJSON(db)
 
+	// Migrate: lowercase all capitalized words in history
+	h.migrateLowercaseWords(db)
+
 	h.mu.Lock()
 	h.db = db
 	h.mu.Unlock()
@@ -1921,6 +1936,136 @@ func (h *HistoryService) migrateFromJSON(db *sql.DB) {
 		// Rename old file as backup
 		os.Rename(jsonPath, jsonPath+".bak")
 	}
+}
+
+// migrateLowercaseWords fixes existing data where words were stored with capital letters.
+// It lowercases the word column and merges duplicates that collapse to the same lowercase word.
+func (h *HistoryService) migrateLowercaseWords(db *sql.DB) {
+	// Use a migration flag column to ensure this only runs once
+	var migrated int
+	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('history') WHERE name = 'word_lowercased'").Scan(&migrated)
+	if err != nil {
+		log.Printf("Warning: check word_lowercased flag failed: %v", err)
+		return
+	}
+	if migrated > 0 {
+		return // Already migrated
+	}
+
+	log.Printf("Migration: lowercasing capitalized words in local history...")
+
+	// Find all entries where word != LOWER(word)
+	rows, err := db.Query(
+		"SELECT id, word, result, created_at, updated_at FROM history WHERE word != LOWER(word) AND deleted = 0",
+	)
+	if err != nil {
+		log.Printf("Warning: query uppercase history entries failed: %v", err)
+		return
+	}
+
+	type entry struct {
+		id        string
+		word      string
+		result    string
+		createdAt int64
+		updatedAt int64
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.id, &e.word, &e.result, &e.createdAt, &e.updatedAt); err != nil {
+			log.Printf("Warning: scan history entry failed: %v", err)
+			continue
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+
+	if len(entries) == 0 {
+		log.Printf("Migration: no capitalized words found in local history")
+	} else {
+		log.Printf("Migration: found %d capitalized words in local history", len(entries))
+
+		// Group by lowercase word to detect duplicates
+		groups := make(map[string][]entry)
+		for _, e := range entries {
+			key := strings.ToLower(e.word)
+			groups[key] = append(groups[key], e)
+		}
+
+		for lowerWord, group := range groups {
+			if len(group) == 1 {
+				// No duplicate — just update the word and result JSON
+				e := group[0]
+				lowerResult := lowercaseResultJSON(e.result, lowerWord)
+				_, err := db.Exec(
+					"UPDATE history SET word = ?, result = ? WHERE id = ?",
+					lowerWord, lowerResult, e.id,
+				)
+				if err != nil {
+					log.Printf("Warning: update word for id=%s failed: %v", e.id, err)
+				}
+				continue
+			}
+
+			// Multiple entries collapse to same lowercase word — keep newest, delete rest
+			// Sort by updated_at descending
+			for i := 1; i < len(group); i++ {
+				for j := i; j > 0 && group[j].updatedAt > group[j-1].updatedAt; j-- {
+					group[j], group[j-1] = group[j-1], group[j]
+				}
+			}
+
+			// Keep group[0] (newest), delete the rest
+			keeper := group[0]
+			lowerResult := lowercaseResultJSON(keeper.result, lowerWord)
+			_, err := db.Exec(
+				"UPDATE history SET word = ?, result = ? WHERE id = ?",
+				lowerWord, lowerResult, keeper.id,
+				)
+			if err != nil {
+				log.Printf("Warning: update word for id=%s failed: %v", keeper.id, err)
+			}
+
+			for _, dup := range group[1:] {
+				_, err := db.Exec("DELETE FROM history WHERE id = ?", dup.id)
+				if err != nil {
+					log.Printf("Warning: delete duplicate id=%s failed: %v", dup.id, err)
+				}
+				log.Printf("Migration: merged duplicate word %q → %q (kept id=%s, deleted id=%s)",
+					keeper.word, lowerWord, keeper.id, dup.id)
+			}
+		}
+
+		log.Printf("Migration: lowercased %d words in local history (%d duplicates merged)",
+			len(entries), len(entries)-len(groups))
+	}
+
+	// Mark migration as done
+	_, err = db.Exec("ALTER TABLE history ADD COLUMN word_lowercased INTEGER NOT NULL DEFAULT 1")
+	if err != nil {
+		log.Printf("Warning: add word_lowercased flag failed: %v", err)
+	}
+
+	log.Printf("Migration: lowercase words migration complete")
+}
+
+// lowercaseResultJSON lowercases the "word" field inside a result JSON string.
+func lowercaseResultJSON(result string, lowerWord string) string {
+	if result == "" {
+		return result
+	}
+	idx := strings.Index(result, `"word":"`)
+	if idx == -1 {
+		return result
+	}
+	start := idx + len(`"word":"`)
+	end := strings.Index(result[start:], `"`)
+	if end == -1 {
+		return result
+	}
+	end += start
+	return result[:start] + lowerWord + result[end:]
 }
 
 // GetDB returns the underlying database connection (for sync service use)
