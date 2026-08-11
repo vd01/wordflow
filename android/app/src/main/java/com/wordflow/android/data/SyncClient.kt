@@ -1,6 +1,7 @@
 package com.wordflow.android.data
 
 import android.content.Context
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.net.cronet.okhttptransport.CronetInterceptor
@@ -9,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.chromium.net.CronetEngine
+import org.chromium.net.ExperimentalCronetEngine
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -20,9 +22,15 @@ class SyncClient(context: Context) {
     private val client: OkHttpClient
 
     init {
-        val cronetEngine = CronetEngine.Builder(context)
+        val cronetBuilder = ExperimentalCronetEngine.Builder(context)
             .enableQuic(true)
-            .build()
+
+        // Pre-seed QUIC server info so Cronet uses HTTP/3 immediately
+        // without waiting for alt-svc discovery on first request.
+        // Format: host:port=quic:port:version
+        cronetBuilder.addQuicHint("word-flow.duckdns.org", 31588, 31588)
+
+        val cronetEngine = cronetBuilder.build()
 
         client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
