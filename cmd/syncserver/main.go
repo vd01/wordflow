@@ -46,7 +46,7 @@ func main() {
 	}
 
 	fmt.Println("╔══════════════════════════════════════════╗")
-	fmt.Println("║     WordFlow Sync Server v1.1.0          ║")
+	fmt.Println("║     WordFlow Sync Server v1.2.0          ║")
 	fmt.Println("║     English Dictionary - Multi-device    ║")
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()

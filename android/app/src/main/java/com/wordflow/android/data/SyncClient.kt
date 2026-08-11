@@ -1,24 +1,38 @@
 package com.wordflow.android.data
 
+import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import com.google.net.cronet.okhttptransport.CronetInterceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.chromium.net.CronetEngine
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
  * HTTP client for the WordFlow SyncServer API.
- * Mirrors the mini program's sync.js, but uses email auth instead of WeChat.
+ * Uses Cronet (HTTP/3 / QUIC) for faster connections with automatic fallback.
  */
-class SyncClient {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+class SyncClient(context: Context) {
+    private val client: OkHttpClient
+
+    init {
+        val cronetEngine = CronetEngine.Builder(context)
+            .enableQuic(true)
+            .build()
+
+        client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            // CronetInterceptor must be added LAST — it redirects requests
+            // to Cronet (QUIC/HTTP3) when available, falls back to OkHttp otherwise.
+            .addInterceptor(CronetInterceptor.newBuilder(cronetEngine).build())
+            .build()
+    }
 
     private val gson = Gson()
     private val jsonType = "application/json; charset=utf-8".toMediaType()

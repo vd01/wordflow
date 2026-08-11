@@ -2,7 +2,7 @@
 const STORAGE_KEY = 'wordwise_config'
 
 // Fixed sync server URL — not user-configurable
-const SERVER_ADDR = 'https://vocab-agent.duckdns.org:31588'
+const SERVER_ADDR = 'https://word-flow.duckdns.org:31588/'
 
 function load() {
   try {

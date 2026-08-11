@@ -2343,15 +2343,18 @@ func (h *HistoryService) GetAllEntriesForSync() []HistoryEntry {
 
 type SyncService struct {
 	history      *HistoryService
-	syncAddr     string // Remote sync server address, e.g. http://your-server:9274
+	syncAddr     string // Remote sync server address, e.g. https://word-flow.duckdns.org:31588/
 	syncToken    string // User Token (assigned by server via QR code login, email login, or legacy create)
 	syncQrCode   string // Cached QR code image (base64 data URL) from last successful login
 	syncEmail    string // Email address used for login (if email auth was used)
 	autoSync     bool   // Whether auto-sync is enabled
 	lastSyncTime int64  // Unix timestamp of last successful sync (for incremental pull)
+
+	syncClient *http.Client // HTTP/3-capable client for sync server communication
 }
 
 func (s *SyncService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	s.syncClient = syncserver.NewHTTP3Client(30 * time.Second)
 	s.loadConfig()
 	// Auto-pull on startup (background, non-blocking, incremental)
 	if s.autoSync && s.syncAddr != "" && s.syncToken != "" {
@@ -2449,7 +2452,7 @@ func (s *SyncService) TestConnection() (string, error) {
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/health"
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := s.syncClient
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("cannot connect to server: %v", err)
@@ -2506,7 +2509,7 @@ func (s *SyncService) RequestQrCode() (map[string]interface{}, error) {
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/qrcode/request"
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := s.syncClient
 	resp, err := client.Post(url, "application/json", strings.NewReader("{}"))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
@@ -2560,7 +2563,7 @@ func (s *SyncService) PollQrCodeStatus(scene string) (map[string]interface{}, er
 	url := fmt.Sprintf("%s/api/v1/auth/qrcode/status?scene=%s",
 		strings.TrimRight(s.syncAddr, "/"), scene)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := s.syncClient
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("poll failed: %v", err)
@@ -2607,7 +2610,7 @@ func (s *SyncService) RequestEmailCode(email string) (string, error) {
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/email/request"
 	body, _ := json.Marshal(map[string]string{"email": email})
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := s.syncClient
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("request failed: %v", err)
@@ -2650,7 +2653,7 @@ func (s *SyncService) VerifyEmailCode(email, code string) (string, error) {
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/email/verify"
 	body, _ := json.Marshal(map[string]string{"email": email, "code": code})
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := s.syncClient
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("verify failed: %v", err)
@@ -2704,7 +2707,7 @@ func (s *SyncService) RequestPairCode() (string, error) {
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/auth/pair/request"
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := s.syncClient
 	req, _ := http.NewRequest("POST", url, nil)
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
@@ -2742,7 +2745,7 @@ func (s *SyncService) CreateUser() (string, error) {
 	}
 
 	url := strings.TrimRight(s.syncAddr, "/") + "/api/v1/user/create"
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := s.syncClient
 	resp, err := client.Post(url, "application/json", strings.NewReader("{}"))
 	if err != nil {
 		return "", fmt.Errorf("request failed: %v", err)
@@ -2810,7 +2813,7 @@ func (s *SyncService) PushToServer() (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.syncClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %v", err)
@@ -2865,7 +2868,7 @@ func (s *SyncService) pullFromServerInternal(silent bool) (string, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.syncClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %v", err)
@@ -2982,7 +2985,7 @@ func (s *SyncService) pushEntryAsync(entry HistoryEntry) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := s.syncClient
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("SyncService: auto-push failed: %v", err)
@@ -3037,7 +3040,7 @@ func (s *SyncService) pushEntriesAsync(entries []HistoryEntry) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.syncToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.syncClient
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("SyncService: batch-push failed: %v", err)

@@ -178,7 +178,7 @@ class ReviewViewModel : ViewModel() {
     private fun pushReviewsAsync(app: WordFlowApp) {
         if (!app.store.isLoggedIn) return
         val store = app.store
-        val client = SyncClient()
+        val client = app.syncClient
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val localCards = store.getAllReviewCards()

@@ -878,9 +878,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
 		"service": "wordflow-sync",
-		"version": "1.1.0",
+		"version": "1.2.0",
 		"time":    time.Now().Unix(),
-		"email":  true, // Email auth always available
+		"email":   true, // Email auth always available
+		"h3":      true, // HTTP/3 (QUIC) supported via Caddy reverse proxy
 	})
 }
 

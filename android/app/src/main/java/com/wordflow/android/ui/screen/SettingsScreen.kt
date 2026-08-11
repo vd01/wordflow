@@ -46,7 +46,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wordflow.android.WordFlowApp
-import com.wordflow.android.data.SyncClient
 import com.wordflow.android.ui.components.StatusBanner
 import com.wordflow.android.ui.components.StatusKind
 import com.wordflow.android.ui.theme.Dimens
@@ -67,7 +66,7 @@ class SettingsViewModel : ViewModel() {
     var status by mutableStateOf<Status?>(null)
     var busy by mutableStateOf(false)
 
-    private val client = SyncClient()
+
 
     fun refresh(app: WordFlowApp) {
         val store = app.store
@@ -86,7 +85,7 @@ class SettingsViewModel : ViewModel() {
         status = Status("正在同步…", StatusKind.LOADING)
         viewModelScope.launch {
             try {
-                val res = withContext(Dispatchers.IO) { client.pull(store.serverAddr, store.token, store.lastSync) }
+                val res = withContext(Dispatchers.IO) { app.syncClient.pull(store.serverAddr, store.token, store.lastSync) }
                 val r = store.mergePulled(res.entries, res.serverNow, store.lastSync == 0L)
                 refresh(app)
                 status = Status("已同步 ${r.changed} 条", StatusKind.SUCCESS)
@@ -104,7 +103,7 @@ class SettingsViewModel : ViewModel() {
         status = Status("正在测试…", StatusKind.LOADING)
         viewModelScope.launch {
             try {
-                val h = withContext(Dispatchers.IO) { client.health(store.serverAddr) }
+                val h = withContext(Dispatchers.IO) { app.syncClient.health(store.serverAddr) }
                 var s = "已连接：${h.service} v${h.version}"
                 if (h.email) s += "（邮箱登录）"
                 status = Status(s, StatusKind.SUCCESS)

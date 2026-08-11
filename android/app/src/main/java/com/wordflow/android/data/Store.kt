@@ -14,6 +14,14 @@ class Store(context: Context) {
         context.getSharedPreferences("wordflow_store", Context.MODE_PRIVATE)
     private val gson = Gson()
 
+    init {
+        // Migrate old server address to new one
+        val oldAddr = prefs.getString("serverAddr", null)
+        if (oldAddr != null && oldAddr.contains("vocab-agent.duckdns.org")) {
+            prefs.edit().putString("serverAddr", DEFAULT_SERVER).apply()
+        }
+    }
+
     // ── Config ──
 
     var serverAddr: String
@@ -258,6 +266,6 @@ class Store(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_SERVER = "https://vocab-agent.duckdns.org:31588"
+        const val DEFAULT_SERVER = "https://word-flow.duckdns.org:31588/"
     }
 }

@@ -68,6 +68,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // HTTP/3 (QUIC) via Cronet
+    implementation("com.google.net.cronet:cronet-okhttp:0.1.1")
+    implementation("org.chromium.net:cronet-api:119.6045.31")
+    implementation("org.chromium.net:cronet-embedded:119.6045.31")
+
     // DataStore (preferences)
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 

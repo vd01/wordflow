@@ -42,10 +42,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.wordflow.android.WordFlowApp
+import android.app.Application
 import com.wordflow.android.data.FsrsEngine
 import com.wordflow.android.data.SyncClient
 import com.wordflow.android.ui.components.StateDot
@@ -64,7 +66,7 @@ import kotlinx.coroutines.sync.withLock
 
 data class HomeStatus(val text: String, val kind: StatusKind)
 
-class HomeViewModel : ViewModel() {
+class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var wordCount by mutableStateOf(0)
     var dueCount by mutableStateOf(0)
     var newCount by mutableStateOf(0)
@@ -78,7 +80,8 @@ class HomeViewModel : ViewModel() {
     var isSyncing by mutableStateOf(false)
         private set
 
-    private val client = SyncClient()
+    private val client: SyncClient
+        get() = (getApplication<Application>() as WordFlowApp).syncClient
     private val fsrs = FsrsEngine()
     private val syncMutex = Mutex()
 

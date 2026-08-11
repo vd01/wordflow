@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
+import android.app.Application
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -53,7 +55,7 @@ import kotlinx.coroutines.withContext
 
 enum class LoginMode { EMAIL, PAIR }
 
-class LoginViewModel : ViewModel() {
+class LoginViewModel(application: Application) : AndroidViewModel(application) {
     var email by mutableStateOf("")
     var code by mutableStateOf("")
     var pairCode by mutableStateOf("")
@@ -64,7 +66,8 @@ class LoginViewModel : ViewModel() {
     var loginSuccess by mutableStateOf(false)
     var loginMode by mutableStateOf(LoginMode.EMAIL)
 
-    private val client = SyncClient()
+    private val client: SyncClient
+        get() = (getApplication<Application>() as WordFlowApp).syncClient
 
     private fun info(msg: String) { status = msg; statusKind = StatusKind.INFO }
     private fun success(msg: String) { status = msg; statusKind = StatusKind.SUCCESS }
