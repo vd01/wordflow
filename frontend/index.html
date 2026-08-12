@@ -89,6 +89,11 @@
                     <small class="form-hint">Required. E.g. gpt-4o-mini, deepseek-chat, qwen-turbo</small>
                 </div>
                 <div class="form-group">
+                    <label for="proxy-input">HTTP Proxy</label>
+                    <input type="text" id="proxy-input" placeholder="http://127.0.0.1:7993"/>
+                    <small class="form-hint">Optional. Used for LLM & audio requests. Default: http://127.0.0.1:7993 (Clash). Empty = direct connection; falls back to direct automatically if the proxy is down.</small>
+                </div>
+                <div class="form-group">
                     <button id="btn-prompt-settings" class="prompt-entry-btn" type="button">📝 LLM Prompt & Field Settings</button>
                     <small class="form-hint">Customize AI role, output fields, and extra requirements; the query UI adapts automatically</small>
                 </div>

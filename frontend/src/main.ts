@@ -100,6 +100,7 @@ GetConfig().then(config => {
         inputApiKey.value = config.apiKey || "";
         inputApiUrl.value = config.apiURL || "";
         inputModelName.value = config.modelName || "";
+        inputProxy.value = config.proxy || "";
     }
 }).catch(err => {
     console.error("[WordFlow] Failed to load LLM config at startup:", err);
@@ -134,6 +135,7 @@ const modalBody = document.getElementById("modal-body") as HTMLDivElement;
 const inputApiKey = document.getElementById("api-key") as HTMLInputElement;
 const inputApiUrl = document.getElementById("api-url") as HTMLInputElement;
 const inputModelName = document.getElementById("model-name") as HTMLInputElement;
+const inputProxy = document.getElementById("proxy-input") as HTMLInputElement;
 const inputShortcutKey = document.getElementById("shortcut-key") as HTMLInputElement;
 const btnRecordShortcut = document.getElementById("btn-record-shortcut") as HTMLButtonElement;
 const btnToggleKey = document.getElementById("btn-toggle-key") as HTMLButtonElement;
@@ -341,6 +343,28 @@ async function doSearch(word: string) {
             } catch (e) {
                 console.error("[WordFlow] Failed to parse ECDICT result:", e);
             }
+        } else {
+            // ECDICT not found — if LLM is configured, show a notice that the
+            // slow AI path is now running (instead of a bare loading spinner).
+            const llmConfigured = inputApiKey.value && inputApiUrl.value && inputModelName.value;
+            if (llmConfigured) {
+                loadingEl.classList.add("hidden");
+                const missText = ecdictAvailable
+                    ? "未在 ECDICT 离线词典中找到该词，正在通过 AI 查询详细释义..."
+                    : "未导入 ECDICT 离线词典，正在通过 AI 查询详细释义...";
+                resultEl.innerHTML = `
+                    <div class="result-card">
+                        <div class="word-header">
+                            <span class="word-text">${escapeHtml(word)}</span>
+                        </div>
+                        <div class="loading-more">
+                            <div class="loading-more-spinner"></div>
+                            <span>${missText}</span>
+                        </div>
+                    </div>`;
+                resultEl.classList.remove("hidden");
+                resultEl.scrollTop = 0;
+            }
         }
         } // end of ECDICT phase
 
@@ -416,6 +440,8 @@ async function doSearch(word: string) {
             // LLM failed - if we have ECDICT data, that's fine
             if (!ecdictData) {
                 loadingEl.classList.add("hidden");
+                // Hide the "querying AI" notice shown during Phase 1 (no ECDICT hit)
+                resultEl.classList.add("hidden");
                 showError(String(err));
                 isSearching = false;
                 return;
@@ -829,6 +855,7 @@ async function showSettings() {
         inputApiKey.value = config.apiKey || "";
         inputApiUrl.value = config.apiURL || "";
         inputModelName.value = config.modelName || "";
+        inputProxy.value = config.proxy || "";
         inputShortcutKey.value = config.shortcutKey || "Ctrl+Alt+Q";
         autoStartToggle.checked = config.autoStart === "true";
         const display = document.getElementById("shortcut-display");
@@ -854,7 +881,7 @@ async function showSettings() {
 async function saveConfig() {
     try {
         const shortcut = inputShortcutKey.value.trim() || "Ctrl+Alt+Q";
-        await SaveConfig(inputApiKey.value, inputApiUrl.value, inputModelName.value, shortcut);
+        await SaveConfig(inputApiKey.value, inputApiUrl.value, inputModelName.value, shortcut, inputProxy.value.trim());
         showToast("设置已保存 ✅");
     } catch (err: any) {
         showError("保存失败: " + String(err));
