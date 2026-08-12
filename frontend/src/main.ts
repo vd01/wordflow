@@ -1,5 +1,5 @@
 import { Events } from "@wailsio/runtime";
-import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, SetAutoStart, GetAutoStart } from "../bindings/wordflow/dictservice.js";
+import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, LookupWordAudio, GetConfig, SaveConfig, GetPromptConfig, SavePromptConfig, TestPrompt, SetAutoStart, GetAutoStart, GetPendingWord } from "../bindings/wordflow/dictservice.js";
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode, RequestPairCode } from "../bindings/wordflow/syncservice.js";
@@ -146,6 +146,15 @@ const autoStartToggle = document.getElementById("auto-start-toggle") as HTMLInpu
 // ============================================================
 let isSearching = false;
 let currentWord = "";
+let queuedWord: string | null = null; // word dropped while a search was in flight
+
+function startQueuedSearch() {
+	if (queuedWord) {
+		const w = queuedWord;
+		queuedWord = null;
+		doSearch(w);
+	}
+}
 let ecdictAvailable = false;
 
 // Check ECDICT availability on load
@@ -258,13 +267,16 @@ async function doSearch(word: string) {
         showToast("请输入要查询的单词");
         return;
     }
-    if (isSearching) {
-        // If searching a different word, mark current as stale so the in-flight search aborts
-        if (currentWord !== word) {
-            currentWord = word; // This will cause the in-flight search to detect stale and abort
-        }
-        return;
-    }
+	if (isSearching) {
+		// If searching a different word, queue it and mark current as stale
+		// so the in-flight search aborts and hands over to the queued word
+		// (previously this silently dropped the new word).
+		if (currentWord !== word) {
+			queuedWord = word;
+			currentWord = word; // This will cause the in-flight search to detect stale and abort
+		}
+		return;
+	}
 
     isSearching = true;
     currentWord = word;
@@ -283,7 +295,7 @@ async function doSearch(word: string) {
         const cacheStartTime = performance.now();
         const cachedResult = await LookupWordCached(word);
         const cacheDuration = performance.now() - cacheStartTime;
-        if (currentWord !== word) { isSearching = false; return; } // Stale query
+        if (currentWord !== word) { isSearching = false; startQueuedSearch(); return; } // Stale query
 
         if (cachedResult) {
             console.log(`[LLM-DEBUG] Cache HIT in ${cacheDuration.toFixed(0)}ms, skipping ECDICT+LLM`);
@@ -328,7 +340,7 @@ async function doSearch(word: string) {
         const ecdictResult = await LookupWordFast(word);
         const ecdictDuration = performance.now() - ecdictStartTime;
         console.log(`[LLM-DEBUG] ECDICT lookup completed in ${ecdictDuration.toFixed(0)}ms, result: ${ecdictResult ? 'found' : 'not found'}`);
-        if (currentWord !== word) { isSearching = false; return; } // Stale query
+        if (currentWord !== word) { isSearching = false; startQueuedSearch(); return; } // Stale query
 
         if (ecdictResult) {
             try {
@@ -391,7 +403,7 @@ async function doSearch(word: string) {
             } else {
                 console.log(`[LLM-DEBUG] LLM returned empty/null result`);
             }
-            if (currentWord !== word) { isSearching = false; return; } // Stale query
+            if (currentWord !== word) { isSearching = false; startQueuedSearch(); return; } // Stale query
 
             if (llmResult) {
                 let parsed: any = null;
@@ -1279,6 +1291,19 @@ Events.On("clipboard-english-detected", (event: any) => {
         doSearch(word);
     }, 300);
 });
+
+// Poll for hotkey words. WebView2 throttles/freezes the renderer while the
+// window is hidden, so the clipboard-english-detected event can arrive late
+// or not at all; this guarantees a hotkey word is picked up as soon as the
+// frontend is responsive again. Dedup is handled by doSearch's guards.
+setInterval(() => {
+	GetPendingWord().then((word: string) => {
+		if (word) {
+			console.log(`[POLL-DEBUG] Picked up pending word: "${word}"`);
+			doSearch(word);
+		}
+	});
+}, 300);
 
 // Focus search input on load
 searchInput.focus();

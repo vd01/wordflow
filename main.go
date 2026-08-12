@@ -36,7 +36,25 @@ var assets embed.FS
 //go:embed build/appicon.png
 var icon []byte
 
+// setupFileLogging redirects log output to a file in the WordWise config dir
+// (in addition to stderr), so debug timings survive GUI launch.
+func setupFileLogging() {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = "."
+	}
+	dir = filepath.Join(dir, "WordWise")
+	os.MkdirAll(dir, 0755)
+	f, err := os.OpenFile(filepath.Join(dir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.Println("===== WordFlow started, file logging enabled =====")
+}
+
 func main() {
+	setupFileLogging()
 	ecdictSvc := &EcdictService{}
 	historySvc := &HistoryService{}
 	syncSvc := &SyncService{history: historySvc}
@@ -48,6 +66,9 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "WordFlow",
 		Description: "查词温故 - 系统托盘 + 全局快捷键 + ECDICT离线词典 + LLM智能查词 + 多设备同步",
+		Windows: application.WindowsOptions{
+			AdditionalBrowserArgs: []string{"--remote-debugging-port=9222", "--remote-allow-origins=*"},
+		},
 		Services: []application.Service{
 			application.NewService(&DictService{ecdict: ecdictSvc, history: historySvc}),
 			application.NewService(ecdictSvc),
@@ -1019,6 +1040,14 @@ type DictService struct {
 	httpClient   *http.Client       // shared client with connection pooling
 	history      *HistoryService    // for cache lookup
 	resultCache  *lruCache         // LRU cache: word -> merged JSON result (bounded size)
+
+	// pendingWord is set by the global hotkey and pulled by the frontend.
+	// WebView2 throttles/freezes the renderer while the window is hidden, so
+	// event delivery to the frontend can be delayed or lost; polling this
+	// field guarantees the hotkey word is picked up as soon as the frontend
+	// is responsive again.
+	pendingWord string
+	pendingMu    sync.Mutex
 }
 
 func (d *DictService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
@@ -1160,6 +1189,7 @@ func (d *DictService) LookupWordFast(word string) string {
 // or empty string if not cached. This avoids redundant LLM calls for words
 // the user has already looked up.
 func (d *DictService) LookupWordCached(word string) string {
+	startTime := time.Now()
 	word = strings.TrimSpace(strings.ToLower(word))
 	if word == "" {
 		return ""
@@ -1182,7 +1212,7 @@ func (d *DictService) LookupWordCached(word string) string {
 		}
 	}
 
-	log.Printf("[LLM-DEBUG] Cache MISS for %q", word)
+	log.Printf("[LLM-DEBUG] Cache MISS for %q (took %v total)", word, time.Since(startTime))
 	return ""
 }
 
@@ -1882,6 +1912,25 @@ func (d *DictService) GetPromptDebugInfo(word string) map[string]string {
 }
 
 // ReadClipboard reads text from system clipboard
+// GetPendingWord returns the word captured by the last global-hotkey press
+// and clears it. The frontend polls this (instead of relying only on the
+// event) because WebView2 throttles the renderer while the window is hidden
+// and event delivery to it can be delayed or lost.
+func (d *DictService) GetPendingWord() string {
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	w := d.pendingWord
+	d.pendingWord = ""
+	return w
+}
+
+// setPendingWord stores the word from a hotkey press for the frontend to pull.
+func (d *DictService) setPendingWord(w string) {
+	d.pendingMu.Lock()
+	d.pendingWord = w
+	d.pendingMu.Unlock()
+}
+
 func (d *DictService) ReadClipboard() string {
 	if d.app == nil {
 		return ""
@@ -1906,33 +1955,51 @@ func (d *DictService) registerShortcut() {
 	err := d.app.GlobalShortcut.Register(d.shortcutKey, func() {
 		application.InvokeSync(func() {
 			w, ok := d.app.Window.Get("main-window")
-			if ok {
-				if w.IsVisible() {
-					// Window is visible — hide it (toggle off)
-					log.Printf("[CLIPBOARD-DEBUG] Window visible, hiding")
-					w.Hide()
-					return
+			if ok && w.IsVisible() {
+				// Window is visible — hide it (toggle off)
+				log.Printf("[SHORTCUT-DEBUG] Window visible, hiding")
+				w.Hide()
+				return
+			}
+			// 1) Try UI Automation first: read the selected text of the
+			//    foreground window directly (no clipboard, no Ctrl+C).
+			//    Must run BEFORE showing our window, otherwise
+			//    GetFocusedElement returns our own webview.
+			word := getFocusedSelectionTextUIA()
+			source := "uia"
+			if !isEnglishText(word) {
+				// 2) Fallback: existing clipboard behavior.
+				text, ok := d.app.Clipboard.Text()
+				log.Printf("[SHORTCUT-DEBUG] Shortcut pressed, uia=%q clipboard: ok=%v text=%q", truncate(word, 50), ok, truncate(text, 50))
+				if ok && isEnglishText(text) {
+					word = strings.TrimSpace(text)
+					source = "clipboard"
+				} else {
+					word = ""
 				}
-				// Window is hidden — show it and read clipboard
+			}
+			// Show the window only after the UIA query, so the foreground
+			// app remains the selection source while we read it.
+			if ok {
 				w.Show()
 				w.Focus()
 			}
-			text, ok := d.app.Clipboard.Text()
-			log.Printf("[CLIPBOARD-DEBUG] Shortcut pressed, clipboard: ok=%v text=%q", ok, truncate(text, 50))
-			if ok && isEnglishText(text) {
-				word := strings.TrimSpace(text)
-				// Auto-lowercase: if the word contains any capital letters, convert to all lowercase
-				// (capitals from sentence-start or caps-lock are not meaningful for dictionary lookup)
-				if len(word) > 0 && word != strings.ToLower(word) {
-					word = strings.ToLower(word)
-				}
-				log.Printf("[CLIPBOARD-DEBUG] Emitting clipboard-english-detected: %q", word)
+			// Auto-lowercase: capitals from sentence-start or caps-lock are
+			// not meaningful for dictionary lookup.
+			word = strings.TrimSpace(word)
+			if len(word) > 0 && word != strings.ToLower(word) {
+				word = strings.ToLower(word)
+			}
+			if word != "" {
+				log.Printf("[SHORTCUT-DEBUG] Emitting (source=%s): %q", source, word)
+				// Store for the frontend poll AND emit the event as a fast path.
+				d.setPendingWord(word)
 				d.app.Event.Emit("clipboard-english-detected", word)
 			} else {
-				log.Printf("[CLIPBOARD-DEBUG] Clipboard text not English or read failed")
+				log.Printf("[SHORTCUT-DEBUG] No English selection found (uia + clipboard)")
 			}
 		})
-	})
+		})
 	if err != nil {
 		log.Printf("register shortcut %s failed: %v", d.shortcutKey, err)
 	} else {

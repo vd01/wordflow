@@ -173,6 +173,25 @@ Interval:          intervalModifier = (requestRetention^(1/decay) - 1) / factor
 ---
 
 ## LLM Query Performance (reviewed 2025-08)
+---
+
+## UIA Selection Reading for the Hotkey (added 2025-08)
+
+**Feature**: The global hotkey now reads the *foreground window's selected text* via UI Automation (`uia_windows.go`) before falling back to the clipboard. In browsers/editors the flow becomes: select word → hotkey (no Ctrl+C).
+
+**Verified vtable layout** (empirically, on Windows 10 19045, via the probe program at `E:/uia_probe`):
+- `IUIAutomation.GetFocusedElement` = vtable **8** (IUnknown 0..2 + own index 5)
+- `IUIAutomationElement.GetCurrentPattern` = vtable **14 or 16** — the slot is OS-dependent (old SDKs put `GetCurrentPattern` at 14, newer at 16). Probe BOTH slots and use whichever writes the 2nd argument register (the 2-arg method).
+- `TextPattern.GetSelection` = vtable **5**, `TextRangeArray.Length/GetElement` = **3/4**, `TextRange.GetText` = **12**
+- `UIA_TextPatternId` = 10014; `CLSID_CUIAutomation` = `ff48dba4-60ef-4201-aa87-54103eef594e`; `IID_IUIAutomation` = `30cbe57d-d9d0-452a-ab13-7ac5ac4825ee`
+
+**Critical pitfall — GetCurrentPatternAs is broken on Win10**: the As-variant QueryInterfaces for `IID_IUIAutomationTextPattern`, whose GUID in the Win11 SDK (10.0.22621: `32eba289-3583-42c9-9c59-3b6d9a1e9b6a`) is NOT recognized by the Win10 system `UIAutomationCore.dll` → `E_NOINTERFACE`. **Use the 2-arg `GetCurrentPattern`** — it returns the raw pattern object whose own vtable IS the TextPattern vtable, so it works on both layouts.
+
+**Other findings**:
+- Classic Notepad `Edit` control does NOT expose TextPattern; conhost/Windows Terminal and Chromium (Chrome/Edge web content + address bar) DO. Chromium exposes web paragraphs as named elements with the pattern.
+- `CoInitializeEx(0, COINIT_APARTMENT_THREADED)` on a fresh goroutine + synchronous outbound COM calls need no message pump. Run the query in a goroutine with a ~1.2s timeout so a hung foreground app can't freeze the app; fall back to clipboard on timeout/failure.
+- Order matters: query UIA BEFORE `w.Show()`/`w.Focus()`, or `GetFocusedElement` returns WordFlow's own webview.
+- `golang.org/x/sys/windows` does NOT export `SendInput`/`keybd_event`/`INPUT`; wails `pkg/w32.SendInput` is CGo-based with a nonstandard struct layout. If auto-copy is ever added, define a custom `INPUT` struct (32 bytes on x64) and call `user32.SendInput` via `syscall.NewLazyDLL`.
 
 **Measured baseline** (DeepSeek `api.deepseek.com`, model `deepseek-v4-flash`, from CN network):
 - DNS+TCP+TLS+TTFT: **~85-217ms** — fast, not the bottleneck
@@ -195,6 +214,19 @@ Interval:          intervalModifier = (requestRetention^(1/decay) - 1) / factor
 ---
 
 ## HTTP Proxy Support (added 2025-08)
+---
+
+## WebView2 Renderer Throttling — hotkey events can be lost (found 2025-08)
+
+**Symptom**: after the global hotkey, the lookup sometimes starts 1-9s late, or never (the emit was sent but no search ever hit the backend). Timing was inconsistent (0s/1s/4s/9s gaps).
+
+**Root cause**: WebView2 throttles/freezes the renderer while the window is hidden ("efficiency mode", see wails `webview_window_windows.go` `show()`/`hide()` and issue #2861). The wails code deliberately keeps the controller `IsVisible=true` to avoid efficiency mode, but the page timers and event delivery still get throttled when the OS window is hidden — so a one-shot `app.Event.Emit` raced with the thaw and was delayed or dropped.
+
+**Fix (pull model)**: `DictService.pendingWord` + `GetPendingWord()` binding (FNV-1a method ID; hand-patched `frontend/bindings/wordflow/dictservice.ts` — the ID for `main.DictService.<Method>` can be computed with `hash/fnv` fnv32a). The frontend polls `GetPendingWord()` every 300ms and searches whatever it returns; the event is kept as a fast path. A pending word survives freeze/thaw and can't be lost.
+
+**Also fixed**: `doSearch` in `main.ts` silently DROPPED a word when another search was in flight (`if (isSearching) { ...; return; }`). Now it queues the word (`queuedWord`) and the in-flight search hands over via `startQueuedSearch()` at its stale checkpoints.
+
+**Lesson**: with Wails v3 + WebView2, do not rely on one-shot event delivery to the frontend around window hide/show — prefer pull/poll patterns for anything that must not be lost. Bindings are method-name hashed (`fnv32a("main.DictService.MethodName")`); compute IDs and hand-patch the TS file instead of full regeneration.
 
 **Feature**: PC client now routes LLM + audio requests through an HTTP proxy, defaulting to `http://127.0.0.1:7993` (Clash).
 
