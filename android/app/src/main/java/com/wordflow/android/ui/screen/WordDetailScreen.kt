@@ -51,7 +51,7 @@ import kotlin.math.ceil
 fun WordDetailScreen(wordId: String, onBack: () -> Unit) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val fsrs = remember { FsrsEngine() }
-    val speaker = rememberTtsSpeaker()
+    val speaker = rememberTtsSpeaker(app.store)
 
     val entry = remember { app.store.getWord(wordId) }
     val parsedResult = entry?.let { app.store.parseResult(it) }

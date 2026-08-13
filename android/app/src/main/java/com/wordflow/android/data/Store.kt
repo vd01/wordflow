@@ -9,7 +9,17 @@ import com.google.gson.reflect.TypeToken
  * Local storage for words, review state, and config.
  * Mirrors the mini program's store.js functionality.
  */
-class Store(context: Context) {
+/**
+ * Persistent record of words that the Youdao TTS has no audio for.
+ * Implemented by [Store]; consumed by the audio player so it stops
+ * retrying words Youdao can never serve.
+ */
+interface NoAudioCache {
+    fun hasNoAudio(word: String): Boolean
+    fun recordNoAudio(word: String)
+}
+
+class Store(context: Context) : NoAudioCache {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("wordflow_store", Context.MODE_PRIVATE)
     private val gson = Gson()
@@ -194,6 +204,51 @@ class Store(context: Context) {
 
     data class DailyCount(var date: String, var newCount: Int)
 
+    // ── No-audio (pronunciation) cache ──
+
+    override fun hasNoAudio(word: String): Boolean = getNoAudioSet().contains(word)
+
+    /** Number of words currently recorded as missing audio (for the settings UI). */
+    fun noAudioCount(): Int = getNoAudioSet().size
+
+    /** Record a word that Youdao has no audio for. Persisted; see [NoAudioCache]. */
+    override fun recordNoAudio(word: String) {
+        val set = getNoAudioSet().toMutableSet()
+        if (!set.add(word)) return
+        val now = System.currentTimeMillis()
+        var guard = prefs.getString(NO_AUDIO_GUARD_KEY, null)
+            ?.let { gson.fromJson(it, NoAudioGuard::class.java) }
+        if (guard == null || now - guard.lastTs > OUTAGE_WINDOW_MS) guard = NoAudioGuard(now, 0)
+        guard.count++
+        // Outage guard: if a burst of words all fail at once, Youdao itself is
+        // probably down (it 500s for everything). Drop the whole list instead of
+        // blacklisting words that actually have audio, so the app self-heals.
+        if (guard.count >= OUTAGE_FAIL_THRESHOLD) {
+            prefs.edit()
+                .remove(NO_AUDIO_KEY)
+                .putString(NO_AUDIO_GUARD_KEY, gson.toJson(NoAudioGuard(now, 0)))
+                .apply()
+            return
+        }
+        prefs.edit()
+            .putString(NO_AUDIO_KEY, gson.toJson(set))
+            .putString(NO_AUDIO_GUARD_KEY, gson.toJson(guard))
+            .apply()
+    }
+
+    /** Forget every recorded no-audio word (recovery from bad entries). */
+    fun clearNoAudio() {
+        prefs.edit().remove(NO_AUDIO_KEY).remove(NO_AUDIO_GUARD_KEY).apply()
+    }
+
+    private fun getNoAudioSet(): Set<String> {
+        val json = prefs.getString(NO_AUDIO_KEY, null) ?: return emptySet()
+        val type = object : TypeToken<Set<String>>() {}.type
+        return gson.fromJson(json, type) ?: emptySet()
+    }
+
+    private data class NoAudioGuard(var lastTs: Long, var count: Int)
+
     // ── Parse result JSON ──
 
     @Suppress("UNUSED_ELVIS_LEFT")
@@ -267,5 +322,10 @@ class Store(context: Context) {
 
     companion object {
         const val DEFAULT_SERVER = "https://word-flow.duckdns.org:31588/"
+
+        private const val NO_AUDIO_KEY = "noAudioWords"
+        private const val NO_AUDIO_GUARD_KEY = "noAudioGuard"
+        private const val OUTAGE_WINDOW_MS = 60_000L
+        private const val OUTAGE_FAIL_THRESHOLD = 5
     }
 }

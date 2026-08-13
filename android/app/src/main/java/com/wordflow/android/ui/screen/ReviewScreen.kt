@@ -243,7 +243,7 @@ class ReviewViewModel : ViewModel() {
 fun ReviewScreen(onBack: () -> Unit, onGoSettings: () -> Unit) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as WordFlowApp
     val vm: ReviewViewModel = viewModel()
-    val speaker = rememberTtsSpeaker()
+    val speaker = rememberTtsSpeaker(app.store)
 
     LaunchedEffect(Unit) { vm.buildQueue(app) }
 

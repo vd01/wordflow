@@ -63,6 +63,7 @@ class SettingsViewModel : ViewModel() {
     var lastSyncDisplay by mutableStateOf("从未同步")
     var dailyLimit by mutableStateOf(0)
     var dailyNewCount by mutableStateOf(0)
+    var noAudioCount by mutableStateOf(0)
     var status by mutableStateOf<Status?>(null)
     var busy by mutableStateOf(false)
 
@@ -76,6 +77,7 @@ class SettingsViewModel : ViewModel() {
         lastSyncDisplay = formatSyncTime(store.lastSync)
         dailyLimit = store.dailyLimit
         dailyNewCount = store.getDailyCount().newCount
+        noAudioCount = store.noAudioCount()
     }
 
     fun sync(app: WordFlowApp) {
@@ -118,6 +120,11 @@ class SettingsViewModel : ViewModel() {
     fun setDailyLimit(app: WordFlowApp, n: Int) {
         app.store.dailyLimit = n
         dailyLimit = n
+    }
+
+    fun clearNoAudio(app: WordFlowApp) {
+        app.store.clearNoAudio()
+        noAudioCount = 0
     }
 
     fun logout(app: WordFlowApp) {
@@ -230,6 +237,26 @@ fun SettingsScreen(onBack: () -> Unit, onLogout: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            SettingsCard("发音") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column {
+                        Text("无音频词缓存", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Youdao 无发音的词已记录 ${vm.noAudioCount} 个，将不再重试",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = { vm.clearNoAudio(app) }) {
+                        Text("清除")
+                    }
+                }
             }
 
             SettingsCard("外观") {
