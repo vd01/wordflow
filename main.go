@@ -63,6 +63,9 @@ func main() {
 	historySvc.syncCb = syncSvc.OnEntryAdded
 	historySvc.syncBulkCb = syncSvc.OnEntriesDeleted
 
+	dictSvc := &DictService{ecdict: ecdictSvc, history: historySvc}
+	readingSvc := &ReadingService{dict: dictSvc}
+
 	app := application.New(application.Options{
 		Name:        "WordFlow",
 		Description: "查词温故 - 系统托盘 + 全局快捷键 + ECDICT离线词典 + LLM智能查词 + 多设备同步",
@@ -70,10 +73,11 @@ func main() {
 			AdditionalBrowserArgs: []string{"--remote-debugging-port=9222", "--remote-allow-origins=*"},
 		},
 		Services: []application.Service{
-			application.NewService(&DictService{ecdict: ecdictSvc, history: historySvc}),
+			application.NewService(dictSvc),
 			application.NewService(ecdictSvc),
 			application.NewService(historySvc),
 			application.NewService(syncSvc),
+			application.NewService(readingSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -103,6 +107,11 @@ func main() {
 		if ok {
 			w.Show()
 			w.Focus()
+		}
+	})
+	trayMenu.Add("打开阅读").OnClick(func(ctx *application.Context) {
+		if err := readingSvc.OpenReader(); err != nil {
+			log.Printf("open reader window failed: %v", err)
 		}
 	})
 	trayMenu.AddSeparator()
@@ -1382,24 +1391,29 @@ func (d *DictService) lookupWordLLMInternal(word string, includeEcdict bool) (st
 
 // callLLM sends a chat-completion request and returns the cleaned JSON content.
 func (d *DictService) callLLM(system, user string, temperature float64, maxTokens int) (string, error) {
+	messages := []map[string]interface{}{
+		{"role": "system", "content": system},
+		{"role": "user", "content": user},
+	}
+	return d.callLLMMessages(messages, temperature, maxTokens)
+}
+
+// callLLMMessages sends a chat-completion with a full message list.
+// Used by the reading feature chat for multi-turn history.
+func (d *DictService) callLLMMessages(messages []map[string]interface{}, temperature float64, maxTokens int) (string, error) {
 	startTime := time.Now()
 
-	// Build messages with cache_control on the system message for prompt caching.
-	// OpenAI: automatically caches prompts >= 1024 tokens; cache_control is a hint.
-	// Anthropic/compatible: uses cache_control breakpoints.
-	// The system prompt is static across requests, so it's the best candidate for caching.
+	// Guard: never fire a request with an unconfigured API key/model.
+	if !d.ready {
+		return "", fmt.Errorf("服务正在初始化，请稍后重试")
+	}
+	if d.apiKey == "" || d.apiURL == "" || d.modelName == "" {
+		return "", ErrLLMNotConfigured
+	}
+
 	reqBody := map[string]interface{}{
-		"model": d.modelName,
-		"messages": []map[string]interface{}{
-			{
-				"role":    "system",
-				"content": system,
-			},
-			{
-				"role":    "user",
-				"content": user,
-			},
-		},
+		"model":       d.modelName,
+		"messages":    messages,
 		"temperature": temperature,
 		"max_tokens":  maxTokens,
 	}
@@ -1419,8 +1433,13 @@ func (d *DictService) callLLM(system, user string, temperature float64, maxToken
 	log.Printf("[LLM-DEBUG] URL: %s", apiURL)
 	log.Printf("[LLM-DEBUG] Model: %s", d.modelName)
 	log.Printf("[LLM-DEBUG] Temperature: %.2f, MaxTokens: %d", temperature, maxTokens)
-	log.Printf("[LLM-DEBUG] System prompt (%d chars): %s", len(system), truncate(system, 100))
-	log.Printf("[LLM-DEBUG] User prompt (%d chars): %s", len(user), truncate(user, 150))
+	msgChars := 0
+	for _, m := range messages {
+		if c, ok := m["content"].(string); ok {
+			msgChars += len(c)
+		}
+	}
+	log.Printf("[LLM-DEBUG] Messages: %d, total %d chars", len(messages), msgChars)
 	log.Printf("[LLM-DEBUG] Request body size: %d bytes", len(jsonData))
 	// Log API key (masked) for debugging
 	apiKeyPreview := "???"

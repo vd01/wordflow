@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import wails from "@wailsio/runtime/plugins/vite";
+import { resolve } from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -9,4 +10,13 @@ export default defineConfig({
     strictPort: true,
   },
   plugins: [wails("./bindings")],
+  // Multi-page: main dictionary window (index.html) + reading window (reader.html)
+  build: {
+    rollupOptions: {
+      input: {
+        index: resolve(__dirname, "index.html"),
+        reader: resolve(__dirname, "reader.html"),
+      },
+    },
+  },
 });

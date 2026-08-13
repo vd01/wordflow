@@ -251,3 +251,24 @@ Interval:          intervalModifier = (requestRetention^(1/decay) - 1) / factor
 - If you still get 403 with the proxy enabled, the Clash node's exit region isn't US/UK (check by curling `https://api.groq.com/...` through the proxy).
 
 **Ordering lesson (bug fixed 2025-08)**: in `DictService.ServiceStartup`, config (including `proxy`) MUST be loaded BEFORE building `httpClient` — the transport captures `d.proxy` at construction time. The first version of the proxy feature loaded config after building the client, so the app always connected directly (which is why switching to Groq produced 403).
+
+## English Reading Feature (added 2026-08)
+
+Full design: `reading-feature-design.md`. Implements `need.md`. **PC client only.**
+
+**Architecture**:
+- Second **dedicated window** ("reader-window", 1280×800, min 1000×640) opened via `ReadingService.OpenReader()` (singleton — focus if exists, else `application.Get().Window.NewWithOptions` with `URL: "/reader.html"`). Window really closes on ✕ (unlike the main popup).
+- `ReadingService` (`reading_service.go`): **local-only SQLite** at `%UserConfigDir%/WordWise/reading.db` (NOT synced — only saved words sync via the existing HistoryService path). Tables: `materials` (+`word_count` column), `material_words`, `translations`, `chat_messages`.
+- **Bindings are method-name hashed (fnv32a of `main.ReadingService.<Method>`)** — `frontend/bindings/wordflow/readingservice.ts` was hand-written with computed IDs (bindings/ is gitignored). Never regenerate all bindings.
+- Frontend is a **Vite multi-page build**: `reader.html` + `src/reader.ts` + `public/reader.css` (CSS must live in `public/` like `style.css` — `/reader.css` is referenced at runtime). `vite.config.ts` adds `reader.html` as a rollup input.
+
+**Key behaviors**:
+- Paragraph splitting must mirror Go exactly: `splitParagraphs` in `reading_service.go` == `splitParagraphs` in `reader.ts` (join hard-wrapped lines on single newlines; blank lines separate paragraphs). Changing one without the other breaks translation indexing.
+- Word lookup pipeline: click/drag-select → `LookupWordFast` (ECDICT ~0.1ms) → compact card; `Enter` or "✨ AI 深入" → `LookupWordLLMFast` → merge (mirrors `mergeResults` in main.ts). `Alt+S` or button → `HistoryService.AddHistory(word, resultJSON)` (upserts + auto-syncs) + `SetMark(status=2)`.
+- Marks: `material_words(status)` — 1 = looked-up (yellow underline), 2 = saved (green ★). Saved wins; escalation only (never downgrade). Marks apply to every occurrence of the exact word form; no lemmatization.
+- Translations: cached per `(material_id, paragraph_index)` — **index-based invalidation** (deviation from the design doc's hash idea): `UpdateMaterial` compares old/new paragraph texts by index and deletes changed/removed indexes' translations. Full translation = frontend loops `TranslateParagraph` per paragraph (progress on button).
+- Chat: `AskQuestion` builds `system(chatSystemPrompt + material)` → history → question. **Append-only history, trimmed by token budget (~12K tokens) not turn count** — keeps DeepSeek's prefix cache hitting (material is a stable prefix). `trimChatHistory` drops whole oldest user+assistant pairs. Q&A persisted only on success.
+- Shortcut guards: `Alt+S`/`Enter` are ignored while typing in INPUT/TEXTAREA; Enter is never stolen from a focused BUTTON. Chat send = Ctrl+Enter in the textarea.
+- `DictService.callLLM` refactored: now delegates to `callLLMMessages(messages, ...)` (multi-turn support). Config guard (ready + apiKey/apiURL/model) moved into `callLLMMessages` so ALL LLM callers are protected, including reading-service calls.
+
+**Tests**: `reading_service_test.go` (`go test -vet=off .` — plain `go test` fails on pre-existing vet errors in `main.go` SyncService lines ~2886/2929/2986, not ours). Covers: paragraph splitting, mark escalation, orphan-mark pruning, translation invalidation on edit, cascade delete, chat trimming, char limit.

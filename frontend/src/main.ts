@@ -3,6 +3,7 @@ import { LookupWordFast, LookupWordLLMFast, LookupWordCached, CacheResult, Looku
 import { EcdictIsAvailable, ImportEcdict } from "../bindings/wordflow/ecdictservice.js";
 import { GetHistory, AddHistory, DeleteHistory, ClearHistory, GetHistoryEntry } from "../bindings/wordflow/historyservice.js";
 import { GetSyncConfig, SaveSyncConfig, TestConnection, PushToServer, PullFromServer, RequestQrCode, PollQrCodeStatus, UnlinkSync, RequestEmailCode, VerifyEmailCode, RequestPairCode } from "../bindings/wordflow/syncservice.js";
+import { OpenReader } from "../bindings/wordflow/readingservice.js";
 
 // ============================================================
 // PromptConfig - LLM prompt customization (mirrors Go PromptConfig)
@@ -114,6 +115,7 @@ const btnClearSearch = document.getElementById("btn-clear-search") as HTMLButton
 const btnSearch = document.getElementById("btn-search") as HTMLButtonElement;
 const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
 const btnSettings = document.getElementById("btn-settings") as HTMLButtonElement;
+const btnReader = document.getElementById("btn-reader") as HTMLButtonElement;
 const btnCloseHistory = document.getElementById("btn-close-history") as HTMLButtonElement;
 const btnCloseSettings = document.getElementById("btn-close-settings") as HTMLButtonElement;
 const btnClearHistory = document.getElementById("btn-clear-history") as HTMLButtonElement;
@@ -1034,6 +1036,17 @@ searchInput.addEventListener("keydown", (e) => {
 
 btnHistory.addEventListener("click", showHistory);
 btnCloseHistory.addEventListener("click", () => historyPanel.classList.add("hidden"));
+
+// Open the reading window (dedicated second window)
+if (btnReader) {
+    btnReader.addEventListener("click", async () => {
+        try {
+            await OpenReader();
+        } catch (e) {
+            console.error("open reader failed", e);
+        }
+    });
+}
 
 btnSettings.addEventListener("click", showSettings);
 btnCloseSettings.addEventListener("click", () => settingsPanel.classList.add("hidden"));

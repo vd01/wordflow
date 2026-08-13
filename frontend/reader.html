@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>WordFlow - 英文阅读</title>
+    <link rel="stylesheet" href="/style.css"/>
+    <link rel="stylesheet" href="/reader.css"/>
+</head>
+<body>
+<div id="reader-app">
+    <!-- ── Left: material list (collapsible) ── -->
+    <aside id="material-list-panel">
+        <div class="list-header">
+            <span class="list-header-title">📚 学习材料</span>
+            <div class="list-header-actions">
+                <button id="btn-add-material" class="icon-btn" title="添加材料">➕</button>
+                <button id="btn-collapse-list" class="icon-btn" title="折叠列表">«</button>
+                <button id="btn-expand-list" class="icon-btn" title="展开列表">»</button>
+            </div>
+        </div>
+        <div id="material-list" class="material-list"></div>
+    </aside>
+
+    <!-- ── Center: reading area ── -->
+    <main id="reading-panel">
+        <div id="reading-toolbar" class="reading-toolbar hidden">
+            <button id="btn-back-list" class="icon-btn" title="返回列表">←</button>
+            <span id="reading-title" class="reading-title"></span>
+            <span class="toolbar-spacer"></span>
+            <div class="font-controls" title="阅读字号">
+                <button id="btn-font-minus" class="font-btn" title="减小字号">A−</button>
+                <span id="font-size-display" class="font-size-display">15</span>
+                <button id="btn-font-plus" class="font-btn" title="增大字号">A+</button>
+            </div>
+            <button id="btn-full-translate" class="secondary-btn small" title="全文翻译">🌐 全文翻译</button>
+        </div>
+        <div id="reading-content" class="reading-content"></div>
+    </main>
+
+    <!-- ── Right: interactive area (width adjustable) ── -->
+    <div id="interactive-resizer" class="resizer" title="拖动调整宽度"></div>
+    <aside id="interactive-panel">
+        <div id="word-card" class="word-card hidden">
+            <div class="word-card-header">
+                <span id="word-card-word" class="word-text"></span>
+                <button id="word-card-close" class="icon-btn" title="收起">✕</button>
+            </div>
+            <div id="word-card-body" class="word-card-body"></div>
+            <div class="word-card-actions">
+                <button id="btn-deep-dive" class="secondary-btn small" title="用 AI 生成完整释义 (Enter)">✨ AI 深入</button>
+                <button id="btn-save-word" class="primary-btn small" title="保存到生词本并同步 (Alt+S)">💾 保存到生词本</button>
+            </div>
+        </div>
+        <div id="chat-panel" class="chat-panel">
+            <div class="chat-header">
+                <span>💬 提问</span>
+                <button id="btn-clear-chat" class="danger-btn small" title="清空聊天记录">清空</button>
+            </div>
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input-row">
+                <textarea id="chat-input" rows="2" placeholder="就当前材料提问...（Ctrl+Enter 发送）"></textarea>
+                <button id="btn-chat-send" class="primary-btn small">发送</button>
+            </div>
+        </div>
+    </aside>
+</div>
+
+<!-- ── Material add/edit form ── -->
+<div id="material-form-modal" class="modal hidden">
+    <div class="modal-content reader-modal-content">
+        <div class="modal-header">
+            <h2 id="material-form-title">添加材料</h2>
+            <button id="btn-close-material-form" class="icon-btn">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="material-title">标题</label>
+                <div class="title-row">
+                    <input type="text" id="material-title" placeholder="输入标题，或点击右侧自动生成" autocomplete="off"/>
+                    <button id="btn-auto-title" class="secondary-btn small" title="根据内容生成标题">✨ 自动生成</button>
+                </div>
+                <small class="form-hint" id="material-title-hint"></small>
+            </div>
+            <div class="form-group">
+                <label for="material-content">内容（最多 20000 字符）</label>
+                <textarea id="material-content" rows="14" placeholder="粘贴英文文章..." spellcheck="false"></textarea>
+                <small class="form-hint" id="material-content-hint"></small>
+            </div>
+            <div class="form-actions">
+                <button id="btn-save-material" class="primary-btn">💾 保存</button>
+                <button id="btn-cancel-material" class="secondary-btn">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="/src/reader.ts"></script>
+</body>
+</html>
