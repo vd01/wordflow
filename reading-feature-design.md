@@ -22,6 +22,9 @@ Key difference from read-frog: word translation lives in the right interactive a
    URL `/reader.html`. Default **1280×800**, min **1000×640**.
    The reader window **really closes** on ✕ (unlike the main popup, which hides to tray).
    The app keeps running in the tray.
+   **Clicking the "📖 Reading" button also hides the main popup** (frontend emits
+   `hide-window` after `OpenReader()` succeeds), so only the reader window stays on
+   screen; the main window returns via the global hotkey or tray "显示窗口".
 
 2. **Material storage** — **local-only, no sync** (materials never reach the SyncServer;
    only saved words sync). New Go service **`ReadingService`** with its own SQLite DB

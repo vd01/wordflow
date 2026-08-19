@@ -1037,11 +1037,13 @@ searchInput.addEventListener("keydown", (e) => {
 btnHistory.addEventListener("click", showHistory);
 btnCloseHistory.addEventListener("click", () => historyPanel.classList.add("hidden"));
 
-// Open the reading window (dedicated second window)
+// Open the reading window (dedicated second window), then close the original
 if (btnReader) {
     btnReader.addEventListener("click", async () => {
         try {
             await OpenReader();
+            // 打开阅读窗口后关闭（隐藏到托盘）原窗口
+            Events.Emit("hide-window");
         } catch (e) {
             console.error("open reader failed", e);
         }
