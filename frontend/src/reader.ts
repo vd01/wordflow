@@ -217,12 +217,13 @@ function renderMaterialList(activeId?: string) {
         const div = document.createElement("div");
         div.className = "material-item" + (m.id === activeId ? " active" : "");
         const wc = m.wordCount || countWords(m.content);
+        const saved = m.savedCount || 0;
         div.innerHTML = `
             <div class="material-item-title">${escapeHtml(m.title)}</div>
             <div class="material-item-meta">
                 <span>${wc} 词</span>
-                <span>${formatDate(m.createdAt)}</span>
-                ${m.savedCount ? `<span class="mark-saved">★ ${m.savedCount}</span>` : ""}
+                <span>更新 ${formatRelativeDate(m.updatedAt || m.createdAt)}</span>
+                ${saved ? `<span class="mark-saved">★ ${saved}</span>` : ""}
             </div>
             <div class="material-item-actions">
                 <button class="secondary-btn small" data-act="edit">✎ 编辑</button>
@@ -344,12 +345,14 @@ async function autoTitleFromForm() {
 }
 
 // ------------------------------------------------------------
+
+// ------------------------------------------------------------
 // Reading font size (A− / A+), persisted
 // ------------------------------------------------------------
 const FONT_SIZE_KEY = "reader-font-size";
-const FONT_MIN = 12;
-const FONT_MAX = 28;
-let readingFontSize = 15;
+const FONT_MIN = 16;
+const FONT_MAX = 24;
+let readingFontSize = 18;
 
 function initFontSizeControls() {
     const saved = Number(localStorage.getItem(FONT_SIZE_KEY));
@@ -370,8 +373,6 @@ function applyReadingFontSize() {
     fontSizeDisplay.textContent = String(readingFontSize);
     localStorage.setItem(FONT_SIZE_KEY, String(readingFontSize));
 }
-
-// ------------------------------------------------------------
 // Open material → reading view
 // ------------------------------------------------------------
 async function openMaterial(id: string) {
@@ -467,6 +468,7 @@ function renderParagraphs() {
     readingContentEl.innerHTML = html;
     readingContentEl.scrollTop = scrollTop;
 }
+
 
 function renderParagraph(text: string, index: number): string {
     const tokens = tokenize(text);
@@ -969,8 +971,16 @@ function countWords(content: string): number {
     return m ? m.length : 0;
 }
 
-function formatDate(ts: number): string {
+function formatRelativeDate(ts: number): string {
     if (!ts) return "";
+    const diff = Math.max(0, Date.now() - ts * 1000);
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return "刚刚";
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} 天前`;
     return new Date(ts * 1000).toLocaleDateString();
 }
 

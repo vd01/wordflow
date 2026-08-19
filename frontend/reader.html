@@ -30,7 +30,7 @@
             <span class="toolbar-spacer"></span>
             <div class="font-controls" title="阅读字号">
                 <button id="btn-font-minus" class="font-btn" title="减小字号">A−</button>
-                <span id="font-size-display" class="font-size-display">15</span>
+                <span id="font-size-display" class="font-size-display">18</span>
                 <button id="btn-font-plus" class="font-btn" title="增大字号">A+</button>
             </div>
             <button id="btn-full-translate" class="secondary-btn small" title="全文翻译">🌐 全文翻译</button>
@@ -54,12 +54,12 @@
         </div>
         <div id="chat-panel" class="chat-panel">
             <div class="chat-header">
-                <span>💬 提问</span>
+                <span>💬 学习助手 <span class="chat-subtitle">结合本文回答；英文表达会先自动优化</span></span>
                 <button id="btn-clear-chat" class="danger-btn small" title="清空聊天记录">清空</button>
             </div>
             <div id="chat-messages" class="chat-messages"></div>
             <div class="chat-input-row">
-                <textarea id="chat-input" rows="2" placeholder="就当前材料提问...（Ctrl+Enter 发送）"></textarea>
+                <textarea id="chat-input" rows="2" placeholder="就当前材料提问...（Ctrl+Enter 发送）" aria-label="向学习助手提问"></textarea>
                 <button id="btn-chat-send" class="primary-btn small">发送</button>
             </div>
         </div>
